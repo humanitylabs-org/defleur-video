@@ -3,8 +3,9 @@ wizard: 0.2
 id: defleur-video
 name: DeFleur Video
 type: service
+category: app
 version: 0.6.5-testing
-summary: Edit a talking-head video into a finished 1080x1920 vertical short with captions and motion graphics.
+summary: "James' vertical-video workflow. It cuts, crops, adds motion graphics and captions."
 license: MIT
 source: https://github.com/humanitylabs-org/defleur-video
 runtime:
