@@ -1,0 +1,14 @@
+name: wizard.md check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install pyyaml
+      - name: wizard.md passes the Wizard OS checker
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/humanitylabs-org/wizard-app-manager/main/wam/wizardmd.py -o wizardmd.py
+          python3 wizardmd.py .
