@@ -6,6 +6,7 @@ type: service
 category: app
 version: 0.6.5-testing
 summary: "James' vertical-video workflow. It cuts, crops, adds motion graphics and captions."
+icon: icon.png
 license: MIT
 source: https://github.com/humanitylabs-org/defleur-video
 runtime:
