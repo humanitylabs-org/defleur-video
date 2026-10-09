@@ -9,6 +9,4 @@ jobs:
         with: {python-version: "3.11"}
       - run: pip install pyyaml
       - name: wizard.md passes the Wizard OS checker
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/humanitylabs-org/wizard-app-manager/main/wam/wizardmd.py -o wizardmd.py
-          python3 wizardmd.py .
+        run: python3 .github/wizard/wizardmd.py .   # vendored from wizard-app-manager; refresh when the spec changes
