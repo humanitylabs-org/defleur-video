@@ -58,7 +58,7 @@ HELPERS = {
     "caption_layer": ("skills/defleur-motion/scripts/caption_layer.py", "6dd0a823bb6cee5212888f9b56707bb1788b43a3bebff180adefd73bd6d246f3"),
     "test_audio_gate": ("skills/defleur-audio/scripts/test_audio_gate.py", "09bba3c7ed527149aba5d9d034e8d8fe210ce230eacf9c961302c01b2707b177"),
 }
-DEFAULTS = ("defaults/james-preset.json", "86871277940f5d29a7f915292429fd960456a517ee0c3873a0569d4c5c830584")
+DEFAULTS = ("defaults/james-preset.json", "de7e9d9659d06b91abfff22ffb096287ec25b3f0afa448c9a8ddac2f5cb38396")
 
 DOCS = {
     "notice": "NOTICE", "readme": "README.md", "setup": "SETUP.md", "neutral-preset": "defaults/neutral-preset.json", "james-preset": "defaults/james-preset.json",
@@ -1060,6 +1060,9 @@ def _motion_root(ctx, value, mode):
     (work / "defleur" / "ledger.js").write_text(motion.ledger_js(mapped, plan, ids, CANVAS))
     resolved = ctx.root / "preset-resolution.json"
     style = json.loads(resolved.read_text())["preset"]["caption"] if resolved.is_file() else _caption_style(ctx, value)
+    violations = motion.caption_policy_violations(plan, style)
+    if violations:
+        raise Rejected("captions must stay on: " + "; ".join(violations))
     words, adjusted = _locked_words(json.loads(asr.read_text())["words"], float(mapped["duration"]))
     if not words:
         raise Rejected("the edited-audio transcript has no words; captions need at least one")
