@@ -142,7 +142,7 @@ MOTION_CONTRACT = {
         "window.visualMode = (t) => 'live' | 'beat' | 'fullscreen-insert' (default from ledger.js; inside an insert window it must return 'fullscreen-insert').",
         "No network: every file must be in the submission (fonts as .woff2). Requests outside the composition are blocked and reported.",
         "Outside beat and insert windows the picture must be the plain live frame: hide all overlays there (checked in decoded pixels).",
-        "Keep text inside the essential rect x 120-960, y 220-1180; captions live in y 1220-1460 (James' house preset), so do not put graphics there while captions show.",
+        "Keep text inside the essential rect x 120-960, y 220-1180; captions live in y 1220-1460 (James' house preset) and stay on for the WHOLE video, beats included, so never put graphics in that band.",
     ],
     "beat_rules": (
         "Every beat makes an EXPLANATORY change: route a cause to an effect, replace a state, accumulate a quantity that changes behaviour, "
@@ -155,10 +155,10 @@ MOTION_CONTRACT = {
         "tile or keep one split-screen dashboard on screen for most of the video. Text at phone size: labels >= 44 px, headlines "
         ">= 72 px. Vary the visual family from beat to beat and carry meaningful objects forward instead of resetting the scene."),
     "captions": ("Captions are burned from the edited-audio words in James' house style (ALL CAPS heavy sans, green spoken word, "
-                 "black stroke). Mark ONE key term per chunk in yellow with plan.caption_emphasis [edited seconds inside that word] - "
-                 "the claim word, a few per minute. One reading locus: where the visual itself shows the same spoken words, list the "
-                 "range in plan.caption_suppress [{start, end, reason}] inside a beat whose caption_treatment is 'suppress'; never "
-                 "show the same words twice."),
+                 "black stroke) and stay on for the WHOLE video, including every beat (preset caption.always_on). Every beat's "
+                 "caption_treatment is 'show' and plan.caption_suppress stays empty: the app refuses plans that switch captions off. "
+                 "Graphics carry labels, numbers and diagrams, not a second copy of the sentence. Mark ONE key term per chunk in "
+                 "yellow with plan.caption_emphasis [edited seconds inside that word] - the claim word, a few per minute."),
     "inserts": ("Fullscreen inserts / B-roll: upload the media (create_asset_upload for .mp4/.jpg/.png/.webp, or base64 in submit_motion for small "
                 "images) and list plan.inserts [{start, end, asset: 'assets/clip.mp4', fit: 'cover'|'contain', clip_start_s, reason}]. During an "
                 "insert window #live shows the insert media (cropped to fill 1080x1920 for cover) instead of the speaker; audio stays the speaker's. "
@@ -1085,9 +1085,9 @@ def preview_framing(project_id: str, ctx: Context, framing: dict | None = None) 
     "Upload YOUR composition for this project: files = {path: text} for index.html, .css, .js, .svg, .json, or "
     "{path: {'base64': ...}} for small .png/.jpg/.webp/.woff2 (use create_asset_upload for video clips and big images). "
     "plan = James' visual-plan: {'beats': [{start, end, spoken_anchor, viewer_inference, visual_family, state_before, "
-    "state_after, causal_action, caption_treatment: 'show'|'suppress', speaker_return}], 'caption_suppress': [{start, end, "
-    "reason}], 'inserts': [{start, end, asset, fit: 'cover'|'contain', clip_start_s, reason}]}, times in seconds of the EDITED "
-    "video. index.html MUST load defleur/ledger.js (app-generated sourceFrameForOutputFrame + DEFLEUR data) and "
+    "state_after, causal_action, caption_treatment: 'show', speaker_return}], 'caption_emphasis': [seconds], 'inserts': "
+    "[{start, end, asset, fit: 'cover'|'contain', clip_start_s, reason}]}, times in seconds of the EDITED video. Captions stay "
+    "on for the whole video in James' house preset: caption_treatment 'suppress' and caption_suppress ranges are refused. index.html MUST load defleur/ledger.js (app-generated sourceFrameForOutputFrame + DEFLEUR data) and "
     "defleur/gsap.min.js (vendored GSAP 3.15.0), have <img id=\"live\"> and define window.renderFrame(t) as synchronous "
     "deterministic state reconstruction (paused GSAP timeline + seek); optional window.visualMode(t) and "
     "window.captionSuppressed(t). Every beat must make an explanatory change (cause->effect, state replacement, accumulation, "

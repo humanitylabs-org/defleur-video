@@ -112,6 +112,18 @@ def _text(v, label, n=600):
     return v
 
 
+def caption_policy_violations(plan: dict, caption_style: dict) -> list[str]:
+    """James' house rule (preset caption.always_on): captions run for the whole video. A plan that switches them off anywhere
+    is refused, so an author cannot hide them during beats. Owner/project presets that set always_on false allow suppression."""
+    if not caption_style.get("always_on"):
+        return []
+    out = [f"caption_suppress {i} ({r.get('start')}-{r.get('end')} s): captions stay on for the whole video in this preset "
+           "(caption.always_on). Remove the range and keep graphics out of the caption band." for i, r in enumerate(plan.get("caption_suppress", []))]
+    out += [f"beat {i}: caption_treatment must be 'show' while caption.always_on is set" for i, b in enumerate(plan.get("beats", []))
+            if b.get("caption_treatment") == "suppress"]
+    return out
+
+
 def validate_plan(plan, duration: float | None, files: set[str]) -> dict:
     """James' visual-plan.json shape plus the app's 'inserts' (fullscreen B-roll windows through #live)."""
     if not isinstance(plan, dict) or set(plan) - {"beats", "caption_suppress", "caption_emphasis", "inserts", "notes"}:

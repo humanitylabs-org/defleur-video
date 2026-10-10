@@ -33,8 +33,9 @@ this full edit, in James' house style, with no style questions.
 - **Visuals are full-frame storytelling, not a dashboard.** Each beat owns the whole 1080x1920 canvas (full-bleed background,
   illustration or diagram scaled to fill), then cuts back to the speaker full-frame. Never shrink the speaker into a corner tile or
   park one split-screen layout over most of the video. Speaker-only stretches between beats are part of the rhythm.
-- **One reading locus.** When a beat shows text, that text is big (labels >= 44 px, headline >= 72 px at 1080 wide) and the
-  caption for those words is either integrated into the graphic or suppressed (`caption_suppress`) - never the same words twice.
+- **Captions stay on for the whole video**, beats included. Every beat uses `caption_treatment: 'show'` and `caption_suppress`
+  stays empty; the app refuses plans that switch captions off. Graphics carry labels, numbers and diagrams in big type
+  (labels >= 44 px, headline >= 72 px at 1080 wide), not a second copy of the spoken sentence.
 
 ## 0. Agent check (before anything else)
 
@@ -71,7 +72,7 @@ Ask once: "Here are the cuts and the motion graphics I plan. Approve, or tell me
 - Convert the approved beat times to **edited** seconds with `time_map`, using `edited = edited_start_s + (source - source_start_s)`.
 - Write the composition by following `motion_contract` exactly: `ledger.js` and `gsap.min.js` first, a full-canvas `#live`, and a
   synchronous `renderFrame(t)` built on a paused timeline with `seek`. Hide every scene outside its beat. Beat backgrounds fill
-  the full canvas; keep written content inside x 120-960 and y 220-1180, because captions sit at y 1220-1460 (unless suppressed).
+  the full canvas; keep written content inside x 120-960 and y 220-1180, because captions sit at y 1220-1460 for the whole video.
 - Run `submit_motion`, then `capture_motion('smoke')`, and look at the frames. Fix and resubmit if needed. Then run
   `capture_motion('proof')` and look at the contact sheet and the beat frames **at phone size**: if a label is hard to read in
   the contact sheet, it is too small. Check that the speaker is full-frame between beats.

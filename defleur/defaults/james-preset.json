@@ -6,6 +6,8 @@
     "font_path": "",
     "font_match": "Montserrat:style=Black",
     "font_note": "James' masters use Arial Black; Montserrat Black (SIL OFL, Debian fonts-montserrat) is the redistributable stand-in. Put arialbd/ariblk in a project preset font_path when licensed.",
+    "always_on": true,
+    "always_on_note": "James' house rule: captions run for the whole video, including during motion beats. Graphics stay out of safe_rect; plan.caption_suppress is rejected while this is true.",
     "font_size_px": 72,
     "active_scale": 1.08,
     "min_scale": 0.8,

@@ -1664,6 +1664,26 @@ print(json.dumps([a, b, done]))
         self.assertFalse(suppression_ok(rng, [{"cue_on": True, "caption_band_changed_fraction": 0.001}]))
         self.assertFalse(suppression_ok(rng, [{"cue_on": False, "caption_band_changed_fraction": 0.02}]))
 
+    def test_house_preset_keeps_captions_on_for_the_whole_video(self):
+        """Split test 2026-10-10: an author suppressed captions on every beat (~19 of 27 s) and James flagged it. The house
+        preset sets caption.always_on, and a plan that switches captions off anywhere is refused before capture."""
+        import motion
+        import workflow
+        preset = json.loads((workflow.UPSTREAM_ROOT / workflow.DEFAULTS[0]).read_text())["caption"]
+        self.assertIs(preset["always_on"], True)
+        beat = {"start": 1.0, "end": 3.0, "caption_treatment": "show"}
+        self.assertEqual(motion.caption_policy_violations({"beats": [beat]}, preset), [])
+        bad = motion.caption_policy_violations({"beats": [{**beat, "caption_treatment": "suppress"}],
+                                                "caption_suppress": [{"start": 1.5, "end": 2.5, "reason": "graphic says it"}]}, preset)
+        self.assertEqual(len(bad), 2)
+        self.assertTrue(any("caption_suppress 0" in v for v in bad) and any("beat 0" in v for v in bad))
+        # An owner/project preset may opt out explicitly.
+        self.assertEqual(motion.caption_policy_violations({"beats": [{**beat, "caption_treatment": "suppress"}],
+                                                          "caption_suppress": [{"start": 1.5, "end": 2.5, "reason": "r"}]},
+                                                         {**preset, "always_on": False}), [])
+        # The capture stage enforces it: the check runs on the resolved caption style before any frame is captured.
+        self.assertIn("motion.caption_policy_violations(plan, style)", Path(workflow.__file__).read_text())
+
     def test_skill_md_served_and_agent_skills_format(self):
         c = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=10)
         c.request("GET", "/SKILL.md")

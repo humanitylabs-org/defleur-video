@@ -1,3 +1,17 @@
+# Unreleased: captions stay on for the whole video (house preset)
+
+From James' review of a motion split test (2026-10-10): the author suppressed captions on every motion beat, about 19 of 27 s,
+because the guide allowed "caption integrated or suppressed". House rule: captions run for the whole video.
+
+- `defaults/james-preset.json` sets `caption.always_on: true`. `submit_motion` (and every later capture/render that rebuilds the
+  ledger) refuses a plan with any `caption_suppress` range or a beat with `caption_treatment: 'suppress'`, naming each range.
+- SKILL.md, `motion_contract` and the `submit_motion` description now say captions stay on and graphics stay out of the caption
+  band (y 1220-1460). Owner/project presets that set `always_on: false` keep the old behaviour.
+- Test: `test_house_preset_keeps_captions_on_for_the_whole_video`. Container suite: 63 tests OK (1 skipped), audio gate rc 0.
+- Real-file check: the split-test house plan (captions off 3.45-11.45, 14.5-22.45, 23.55-26.6 s) is now refused; re-rendered with
+  captions on, the delivery gate passes, 0 words lost, and captions show on 607/659 frames - every caption-free frame is a pause
+  between words.
+
 # Unreleased: James' house style by default (captions, tight cuts, full-frame visuals)
 
 From Miguel's test on 0.6.5 (Hermes + Opus 5.5, 2-minute talking head): the edit kept a 3.1 s "um ... [dead air]" gap and ~12 s of
