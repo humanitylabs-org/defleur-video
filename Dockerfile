@@ -41,7 +41,7 @@ ADD --checksum=sha256:8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2
     https://media.githubusercontent.com/media/opencv/opencv_zoo/f12e12798e8314f7c074a6656816c048dcc95b7a/models/face_detection_yunet/face_detection_yunet_2023mar.onnx \
     /opt/models/yunet.onnx
 RUN chmod 0644 /opt/models/yunet.onnx
-LABEL org.opencontainers.image.source="https://github.com/humanitylabs-org/wizard-app-store" org.opencontainers.image.description="DeFleur Video testing API + MCP endpoint (audio/edit, face crop, motion capture via the Browser app, captions, final encode)"
+LABEL org.opencontainers.image.source="https://github.com/humanitylabs-org/defleur-video" org.opencontainers.image.description="DeFleur Video testing API + MCP endpoint (audio/edit, face crop, motion capture via the Browser app, captions, final encode)"
 # James' plugin files, byte-for-byte (upstream commit 30768288eb1308b18216a5df5eb4648fbce3e55b, MIT per plugin.json).
 COPY defleur/ /opt/defleur/
 COPY NOTICE /opt/defleur/NOTICE
