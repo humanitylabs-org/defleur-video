@@ -26,7 +26,7 @@ UPSTREAM_ROOT = Path(os.environ.get("DEFLEUR_ROOT") or ("/opt/defleur" if Path("
 APP_ROOT = Path(__file__).resolve().parent
 HELPER_PYTHON = os.environ.get("VIDEO_HELPER_PYTHON") or ("/opt/venv/bin/python" if Path("/opt/venv/bin/python").exists() else sys.executable)
 MODELS_DIR = Path(os.environ.get("VIDEO_MODELS_DIR", "/data/models"))
-FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
+FONT_DIR = "/usr/share/fonts/"
 FACE_MODEL = Path(os.environ.get("VIDEO_FACE_MODEL", "/opt/models/yunet.onnx"))
 FACE_MODEL_SHA256 = "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"  # opencv_zoo YuNet 2023mar (MIT)
 CANVAS = (1080, 1920)
@@ -44,7 +44,7 @@ BROWSER_HINT = ("Install the Browser app from the Wizard App Store on the same R
 # Exact upstream bytes (commit 30768288eb1308b18216a5df5eb4648fbce3e55b). Verified before every run.
 HELPERS = {
     "probe_source": ("skills/defleur-edit/scripts/probe_source.py", "ce1874c4b81547b56d60de129a235ad97857c560abf69b091f7a821454ed7cf0"),
-    "preset": ("skills/defleur-edit/scripts/preset.py", "5260b709e71a694756e2a9da4088ffb0323f6f4fc02ab4c3ff3c11516b7b75ce"),
+    "preset": ("skills/defleur-edit/scripts/preset.py", "6b45c2502f2861d16df6aa3cdda512c7e40b710bd6247db5313ce093e3884421"),
     "validate_project": ("skills/defleur-edit/scripts/validate_project.py", "4cfb6a9e7c3a633eb37920ae6e2b343c46df05740f4e7ca97ea8108d07d7dd05"),
     "preflight": ("skills/defleur-audio/scripts/preflight.py", "ab4aa87761859c43b91841fe899e203ba54491705abd6684722e554ccaecca14"),
     "asr": ("skills/defleur-audio/scripts/asr.py", "e007fc22e31822aa0b1b46fccdf1a295b4b813e4230d391f7bbbc24285935a96"),
@@ -55,13 +55,13 @@ HELPERS = {
     "audio_gate": ("skills/defleur-audio/scripts/audio_gate.py", "aa2d5965b0cc8f19103f42899cfe3be09c6b9760c3e16a2717bf4441a81431ce"),
     "encode": ("skills/defleur-motion/scripts/encode.py", "1b431ca6012804d4add45841437a0737038dc36d7318e06d4975bcbddddcb76d"),
     "capture": ("skills/defleur-motion/scripts/capture.cjs", "e09fc4625000dbde832900ef0b94c45a2fbbe56a22a97436f93f6a05e4a86b89"),
-    "caption_layer": ("skills/defleur-motion/scripts/caption_layer.py", "b096a9d36f04ef71ba3779e5bc9acffaa88412d7fbcf8d209c4188190ac413fe"),
+    "caption_layer": ("skills/defleur-motion/scripts/caption_layer.py", "6dd0a823bb6cee5212888f9b56707bb1788b43a3bebff180adefd73bd6d246f3"),
     "test_audio_gate": ("skills/defleur-audio/scripts/test_audio_gate.py", "09bba3c7ed527149aba5d9d034e8d8fe210ce230eacf9c961302c01b2707b177"),
 }
-DEFAULTS = ("defaults/neutral-preset.json", "d4992d28e6b0219778e377d696bd6a8db8d5db90bce64f87784d2a4e38f47072")
+DEFAULTS = ("defaults/james-preset.json", "86871277940f5d29a7f915292429fd960456a517ee0c3873a0569d4c5c830584")
 
 DOCS = {
-    "notice": "NOTICE", "readme": "README.md", "setup": "SETUP.md", "neutral-preset": "defaults/neutral-preset.json",
+    "notice": "NOTICE", "readme": "README.md", "setup": "SETUP.md", "neutral-preset": "defaults/neutral-preset.json", "james-preset": "defaults/james-preset.json",
     "defleur-edit": "skills/defleur-edit/SKILL.md", "defleur-edit-contract": "skills/defleur-edit/references/project-contract.md",
     "defleur-audio": "skills/defleur-audio/SKILL.md", "defleur-audio-contract": "skills/defleur-audio/references/audio-contract.md",
     "defleur-motion": "skills/defleur-motion/SKILL.md", "defleur-motion-contract": "skills/defleur-motion/references/motion-contract.md",
@@ -76,7 +76,7 @@ ID = re.compile(r"^[a-f0-9]{32}$")
 # stage -> (wall seconds, description)
 STAGES = {
     "source-audio": (1800, "probe_source.py + 48 kHz PCM s16 source.wav decode"),
-    "resolve-preset": (60, "preset.py over neutral defaults + client owner/project JSON"),
+    "resolve-preset": (60, "preset.py over James' house defaults + client owner/project JSON"),
     "preflight": (60, "preflight.py dependency/language check"),
     "asr": (5400, "Transcriber app -> asr.py receipt schema"),
     "align": (5400, "align.py (stable-ts, local CPU)"),
@@ -814,7 +814,7 @@ def _face_model():
 
 
 def _caption_style(ctx, value):
-    """Resolve James' preset (neutral defaults + optional resolve-preset job) and return its caption block."""
+    """Resolve the preset (James' house defaults + optional resolve-preset job) and return its caption block."""
     if "preset_job" in value:
         path, _ = ctx.ref(value["preset_job"], {"resolve-preset"}, "preset-resolution.json", "preset-resolution.json")
     else:

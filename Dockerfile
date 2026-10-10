@@ -26,10 +26,11 @@ RUN uv venv --python /usr/bin/python3 /opt/venv \
 FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 VIDEO_BIND=0.0.0.0 VIDEO_DATA_DIR=/data \
     DEFLEUR_ROOT=/opt/defleur VIDEO_HELPER_PYTHON=/opt/venv/bin/python VIDEO_MODELS_DIR=/data/models
-RUN apt-get update && apt-get install -y --no-install-recommends python3 ffmpeg util-linux tini ca-certificates fontconfig fonts-dejavu-core \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ffmpeg util-linux tini ca-certificates fontconfig fonts-dejavu-core fonts-montserrat \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir /app /data && chown 1000:1000 /data
-RUN test -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf && fc-match -f '%{file}' 'sans-serif:style=Bold' | grep -q '^/usr/share/fonts/truetype/dejavu/'
+RUN test -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf && fc-match -f '%{file}' 'sans-serif:style=Bold' | grep -q '^/usr/share/fonts/truetype/dejavu/' \
+    && fc-match -f '%{file}' 'Montserrat:style=Black' | grep -q 'Montserrat-Black'
 COPY --from=venv /opt/venv /opt/venv
 COPY --from=capture /usr/local/bin/node /usr/bin/node
 COPY --from=capture /opt/capture /opt/capture

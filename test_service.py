@@ -1168,6 +1168,99 @@ class MediaTests(unittest.TestCase):
         # A cut over a transcribed word is speech the transcript explains; the word-loss check owns it, not this one.
         self.assertTrue(cut_sound_check([{"start_s": 0.5, "end_s": 1.0}], env, a + c)["pass"])
 
+    def _rumble_wav(self, path, plan, rate=48000):
+        """Like _speechy_wav, but the 'room' parts are loud low-frequency rumble (AC/handling noise, < 120 Hz) with
+        a broadband level close to speech, and 'uh' is a short voiced filler the ASR did not transcribe."""
+        import math, random, struct
+        rnd = random.Random(11)
+        out = bytearray()
+        for kind, secs in plan:
+            for i in range(int(secs * rate)):
+                t = i / rate
+                if kind == "tone":
+                    env = 0.55 + 0.45 * math.sin(2 * math.pi * 4 * t)
+                    v = env * sum(math.sin(2 * math.pi * 140 * k * t) / k for k in range(1, 12)) * 0.18
+                elif kind == "uh":
+                    v = sum(math.sin(2 * math.pi * 120 * k * t) / k for k in range(1, 12)) * 0.12
+                else:  # room rumble: 50-110 Hz, ~-24 dBFS broadband, almost nothing in 300-3400 Hz
+                    v = 0.05 * math.sin(2 * math.pi * 55 * t) + 0.03 * math.sin(2 * math.pi * 97 * t) + rnd.uniform(-1, 1) * 0.002
+                v += 0.008 * math.sin(2 * math.pi * 55 * t)  # constant room tone under everything
+                out += struct.pack("<h", max(-32767, min(32767, int(v * 32767))))
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(bytes(out))
+
+    def test_room_rumble_pause_is_proposed_but_a_hidden_uh_is_not(self):
+        """James' footage: a 3 s 'um ... [rumble]' gap stayed in the edit because broadband RMS called the rumble speech."""
+        from editing import candidates_from
+        with tempfile.TemporaryDirectory() as d:
+            wav, out = Path(d) / "a.wav", Path(d) / "e.json"
+            self._rumble_wav(wav, [("tone", 2), ("room", 3), ("tone", 2), ("room", 0.6), ("uh", 0.4), ("room", 0.6), ("tone", 2)])
+            py = "/opt/venv/bin/python" if Path("/opt/venv/bin/python").exists() else sys.executable
+            subprocess.run([py, "-I", str(Path(service.__file__).with_name("energy.py")), str(wav), str(out)], check=True, capture_output=True)
+            env = json.loads(out.read_text())
+        self.assertEqual(len(env["voice_dbfs"]), len(env["dbfs"]))
+        words = [{"word": "first", "start": 0.1, "end": 1.95}, {"word": "second", "start": 5.05, "end": 6.95},
+                 {"word": "third", "start": 8.65, "end": 10.5}]
+        _, proposed, review, _ = candidates_from(words, 10.6, env)
+        # The 3 s rumble-only gap (1.95-5.05) is cut down to handles.
+        self.assertTrue(any(p["start_s"] <= 2.3 and p["end_s"] >= 4.7 for p in proposed), proposed)
+        # The gap holding an untranscribed voiced 'uh' (7.6-8.0) is never proposed; it goes to owner review.
+        self.assertFalse(any(p["start_s"] < 8.0 and p["end_s"] > 7.6 for p in proposed), proposed)
+        self.assertTrue(any(r["start_s"] <= 7.6 and r["end_s"] >= 8.0 for r in review), review)
+
+    def test_house_tightening_proposes_stutters_and_padding_but_not_grammatical_doubles(self):
+        from editing import candidates_from
+        def ws(text):
+            out, t = [], 0.1
+            for tok in text.split():
+                out.append({"word": tok, "start": round(t, 2), "end": round(t + 0.3, 2)}); t += 0.35
+            return out
+        words = ws("So I I think, you know, the plan works. I know that that works, right, and we ship it.")
+        cands, proposed, _, _ = candidates_from(words, words[-1]["end"] + 0.2)
+        kinds = {(c["kind"], c["word"].strip(",").lower(), c.get("proposed")) for c in cands}
+        self.assertIn(("repeat", "i", True), kinds)          # stutter: proposed
+        self.assertIn(("repeat", "that", False), kinds)      # "that that": grammatical, review only
+        self.assertIn(("discourse_marker", "you know", True), kinds)
+        self.assertIn(("discourse_marker", "right", True), kinds)
+        texts = lambda a, b: " ".join(w["word"] for w in words if w["start"] >= a - 1e-6 and w["end"] <= b + 1e-6)
+        removed = " ".join(texts(p["start_s"], p["end_s"]) for p in proposed)
+        self.assertIn("you know,", removed)
+        self.assertNotIn("that that", removed)
+        # Unpunctuated uses are content, never touched.
+        plain = ws("I like it and you know what I mean")
+        c2, p2, _, _ = candidates_from(plain, plain[-1]["end"] + 0.2)
+        self.assertFalse([c for c in c2 if c["kind"] == "discourse_marker"], c2)
+
+    def test_james_caption_style_caps_green_active_and_yellow_key_term(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow not installed in this Python")
+        root = Path(service.__file__).parent / "defleur"
+        sys.path.insert(0, str(root / "skills/defleur-motion/scripts"))
+        import caption_layer
+        preset = json.loads((root / "defaults/james-preset.json").read_text())["caption"]
+        font = subprocess.run(["fc-match", "-f", "%{file}", preset["font_match"]], capture_output=True, text=True).stdout.strip()
+        if not font or not Path(font).is_file():
+            self.skipTest("no fontconfig sans font")
+        words = [{"word": w, "start": 0.2 + 0.4 * i, "end": 0.55 + 0.4 * i} for i, w in enumerate("the first level is money.".split())]
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d)
+            (proj / "locked-timeline.json").write_text(json.dumps({"words": words}))
+            (proj / "caption-style.json").write_text(json.dumps({**preset, "font_path": font}))
+            (proj / "visual-plan.json").write_text(json.dumps({"beats": [], "caption_emphasis": [1.2]}))  # inside "level" (1.0-1.35 s)
+            self.assertEqual([len(c) for c in caption_layer.style_chunks(words, preset)], [3, 2])  # 'the first level' | 'is money.'
+            draw = caption_layer.caption_engine(proj)
+            frame = draw(Image.new("RGB", (1080, 1920), (40, 40, 40)), 0.35).convert("RGB")  # 'the' spoken
+            px = list(frame.crop((120, 1220, 960, 1460)).getdata())
+            green = sum(1 for r, g, b in px if g > 180 and r < 120 and b < 120)
+            yellow = sum(1 for r, g, b in px if r > 200 and g > 180 and b < 90)
+            self.assertGreater(green, 200)   # active word drawn green
+            self.assertGreater(yellow, 200)  # key term drawn yellow
+            silent = draw(Image.new("RGB", (1080, 1920), (40, 40, 40)), 0.57).convert("RGB")  # between words
+            px2 = list(silent.crop((120, 1220, 960, 1460)).getdata())
+            self.assertEqual(sum(1 for r, g, b in px2 if g > 180 and r < 120 and b < 120), 0)  # nothing green in a gap
+
     def test_clean_cuts_keeps_override_only_on_the_approved_range(self):
         # mcp_server needs the venv's MCP SDK; run it there (the unit suite itself runs on the system Python).
         py = "/opt/venv/bin/python" if Path("/opt/venv/bin/python").exists() else os.environ.get("E2E_MCP_PYTHON", sys.executable)
@@ -1243,10 +1336,11 @@ print(json.dumps([a, b]))
             self.assertLessEqual(hi, nxt, c)
             self.assertLess(lo, hi, c)
         for p in proposed:
-            for w in words:
-                if w["word"] != "um":
+            for k, w in enumerate(words):
+                stutter = k + 1 < len(words) and w["word"] == words[k + 1]["word"]  # first of a repeat: house default cut
+                if w["word"] != "um" and not stutter:
                     self.assertFalse(p["start_s"] < w["end"] and p["end_s"] > w["start"], (p, w))
-        self.assertEqual([(p["start_s"], p["end_s"]) for p in proposed], [(33.42, 33.59), (38.39, 39.17)])
+        self.assertEqual([(p["start_s"], p["end_s"]) for p in proposed], [(33.42, 33.59), (38.39, 39.17), (39.19, 39.48)])
 
     def _kept(self, text, start=0.0, step=0.4):
         return [{"word": w, "start": round(start + i * step, 3), "end": round(start + i * step + 0.3, 3)} for i, w in enumerate(text.split())]

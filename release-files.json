@@ -20,6 +20,7 @@
   "images/defleur-video/defleur/.gitignore",
   "images/defleur-video/defleur/README.md",
   "images/defleur-video/defleur/SETUP.md",
+  "images/defleur-video/defleur/defaults/james-preset.json",
   "images/defleur-video/defleur/defaults/neutral-preset.json",
   "images/defleur-video/defleur/package.json",
   "images/defleur-video/defleur/plugin.json",
