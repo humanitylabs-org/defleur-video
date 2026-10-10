@@ -116,7 +116,7 @@ def check(a) -> None:
     import numpy as np
     from PIL import Image
     sys.path.insert(0, str(a.caption_dir))
-    from caption_layer import _chunks, caption_engine  # James' adapter decides when and which cue is on
+    from caption_layer import caption_engine, style_chunks  # James' adapter decides when and which cue is on
     root = a.project
     timeline = json.loads((root / "locked-timeline.json").read_text())
     ledger = json.loads(a.crop_ledger.read_text())
@@ -161,7 +161,7 @@ def check(a) -> None:
     shown = [f for f in sample if states[f]] or sample
     sheet = Image.fromarray(final[shown[len(shown) // 2]]).resize((cw // 4, ch // 4))
     sheet.save(root / "final-frame-sample.png")
-    cues = len(_chunks(timeline["words"], int(style["max_words"]), int(style["max_chars"])))
+    cues = len(style_chunks(timeline["words"], style))
     result = {"frames": frames, "caption_cues": cues, "cue_on_frames": len(on), "cue_off_frames": len(off), "samples": rows,
               "crop_matches_ledger": crop_ok, "caption_band_changes_with_cues": caption_ok,
               "cue_off_band_checked": bool(off_d), "pass": crop_ok and caption_ok,

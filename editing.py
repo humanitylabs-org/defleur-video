@@ -265,15 +265,39 @@ WORD_PAD_S = 0.05
 EDGE_GUARD_S = 0.15    # minimum distance from a pause cut to the nearest (aligned) word
 TAIL_MARGIN_S = 0.1    # extra silence kept after a word's audible tail / before its audible onset
 TAIL_DROP_DB = 30.0    # word tails/onsets (sibilants, soft onsets): frames above (level - 30 dB) or floor + 6 dB
+NOISE_MARGIN_DB = 6.0  # room tone: a frame must also be this far above the file's noise floor to count as speech-like
+
+# James' tightening rules (house default). A repeated word is a stutter/restart unless it is one of these legitimate
+# doubles ("I know that that works", "very very"). Comma-isolated discourse markers are verbal padding.
+LEGIT_DOUBLES = {"that", "had", "very", "really", "no", "yeah", "bye", "so", "is", "do", "ha", "go"}
+DISCOURSE_MARKERS = (("you", "know"), ("i", "mean"), ("right",), ("like",), ("basically",), ("literally",), ("kind", "of"), ("sort", "of"))
 
 
 def _norm(word):
     return "".join(c for c in str(word).lower() if c.isalnum())
 
 
-def speech_level(env, words):
-    """Median loudness (dBFS) of transcribed words of at least 80 ms: the file's speech level."""
-    fs, db = env["frame_s"], env["dbfs"]
+def _band(env, broadband=False):
+    """The envelope used to judge speech: the voice band (300-3400 Hz) when energy.py wrote it, else broadband.
+    Room rumble, AC hum and handling noise sit mostly below 300 Hz and must not make a silent pause look like speech.
+    Word tails/onsets (sibilants up to 8 kHz) are protected on the 300-8000 Hz tail band (broadband=True), which keeps
+    the sibilants and drops the rumble; older envelopes without it fall back to broadband."""
+    if broadband:
+        return env.get("tail_dbfs") or env["dbfs"]
+    return env.get("voice_dbfs") or env["dbfs"]
+
+
+def noise_floor(env):
+    """10th-percentile voice-band frame level: the room tone. Cached on the envelope (it is read per gap)."""
+    if "_noise_floor" not in env:
+        db = sorted(_band(env))
+        env["_noise_floor"] = db[len(db) // 10] if db else -120.0
+    return env["_noise_floor"]
+
+
+def speech_level(env, words, broadband=False):
+    """Median loudness (dBFS, voice band unless broadband) of transcribed words of at least 80 ms: the speech level."""
+    fs, db = env["frame_s"], _band(env, broadband)
     vals = []
     for w in words:
         if w["end"] - w["start"] < 0.08:
@@ -293,8 +317,10 @@ def speech_like(env, a, b, level, words=()):
     """Seconds of speech-like 10 ms frames in [a, b) outside transcribed word spans (+-50 ms)."""
     if level is None:
         return 0.0
-    fs, db = env["frame_s"], env["dbfs"]
-    threshold = max(level - SPEECH_DROP_DB, SPEECH_FLOOR_DB)
+    fs, db = env["frame_s"], _band(env)
+    # Speech-like = within SPEECH_DROP_DB of the speech level AND clearly above the room's noise floor. On a noisy
+    # phone recording the floor sits only ~10 dB under speech, so level - 15 dB alone flags pure room tone.
+    threshold = max(level - SPEECH_DROP_DB, noise_floor(env) + NOISE_MARGIN_DB, SPEECH_FLOOR_DB)
     spans = [(w["start"] - WORD_PAD_S, w["end"] + WORD_PAD_S) for w in words if w["end"] > a - 1 and w["start"] < b + 1]
     n = 0
     for i in range(max(0, int(a / fs)), min(len(db), int(math.ceil(b / fs)))):
@@ -305,7 +331,7 @@ def speech_like(env, a, b, level, words=()):
 
 
 def _edge_threshold(env, level):
-    db = sorted(env["dbfs"])
+    db = sorted(_band(env, broadband=True))
     floor = db[len(db) // 10] if db else -120.0
     return max(level - TAIL_DROP_DB, floor + 6.0)
 
@@ -316,7 +342,7 @@ def quiet_span(env, level, a, b, lead=False, trail=False):
     Starts at least EDGE_GUARD_S after `a` and TAIL_MARGIN_S after the last audible frame of the run that continues
     from `a` (a quiet "ts" or breathy release), and ends symmetrically before `b`. lead/trail: the gap is the file's
     start/end (no word on that side). Returns (lo, hi) or None when nothing safe is left."""
-    fs, db = env["frame_s"], env["dbfs"]
+    fs, db = env["frame_s"], _band(env, broadband=True)
     thr = _edge_threshold(env, level)
     lo, hi = (0.0 if lead else a + EDGE_GUARD_S), (b if trail else b - EDGE_GUARD_S)
     if not lead:
@@ -361,6 +387,21 @@ def _inside_neighbours(lo, hi, w, prev_end, next_start, duration):
     return round(a, 3), round(b, 3)
 
 
+def _marker_at(words, i):
+    """Length of a comma-isolated discourse marker ("..., you know, ...", "..., like, ...") starting at word i, else 0.
+    Needs ASR punctuation: the previous word ends with a comma (or the marker opens a sentence) and the marker's last
+    word ends with a comma. Unpunctuated uses ("I like it", "you know what I mean") are never touched."""
+    if not i or not str(words[i - 1]["word"]).strip().endswith((",", ".", "?", "!")):
+        return 0
+    for marker in DISCOURSE_MARKERS:
+        j = i + len(marker) - 1
+        if j + 1 >= len(words):
+            continue
+        if tuple(_norm(words[k]["word"]) for k in range(i, j + 1)) == marker and str(words[j]["word"]).strip().endswith(","):
+            return len(marker)
+    return 0
+
+
 def candidates_from(words, duration, env=None):
     """Filler / repeat / pause candidates, the default cut proposal, and gaps with untranscribed sound.
 
@@ -369,6 +410,7 @@ def candidates_from(words, duration, env=None):
     `untranscribed_sound` for owner review and are never proposed. Without an energy envelope nothing but tight
     filler spans is proposed."""
     level = speech_level(env, words) if env else None
+    elevel = speech_level(env, words, broadband=True) if env else None  # word tails/onsets: broadband (sibilants)
     loud = (lambda a, b: speech_like(env, a, b, level, words)) if env else (lambda a, b: None)
     cands, review = [], []
     around = lambda a, b: (" ".join(w["word"] for w in words if w["end"] <= a)[-60:], " ".join(w["word"] for w in words if w["start"] >= b)[:60])
@@ -380,8 +422,8 @@ def candidates_from(words, duration, env=None):
             cut = list(_inside_neighbours(w["start"] - 0.02, w["end"] + 0.02, w, prev_end if i else None,
                                           next_start if i + 1 < len(words) else None, duration))
             if env:  # extend into the measured-silent part of the gaps around the filler, never into a neighbour's tail
-                left = quiet_span(env, level, prev_end, w["start"], lead=i == 0)
-                right = quiet_span(env, level, w["end"], next_start, trail=i + 1 == len(words))
+                left = quiet_span(env, elevel, prev_end, w["start"], lead=i == 0)
+                right = quiet_span(env, elevel, w["end"], next_start, trail=i + 1 == len(words))
                 if left and loud(left[0], w["start"]) <= SPEECH_GUARD_S:
                     cut[0] = left[0]
                 if right and loud(w["end"], right[1]) <= SPEECH_GUARD_S:
@@ -389,10 +431,27 @@ def candidates_from(words, duration, env=None):
             cands.append({"kind": "filler", "word": w["word"], "word_index": i, "start_s": w["start"], "end_s": w["end"],
                           "cut": cut, "reason": f"filler '{w['word']}'"})
         if i + 1 < len(words) and n and n == _norm(words[i + 1]["word"]) and n not in FILLERS:
+            auto = n not in LEGIT_DOUBLES
             cands.append({"kind": "repeat", "word": w["word"], "word_index": i, "start_s": w["start"], "end_s": w["end"],
                           "cut": list(_inside_neighbours(w["start"] - 0.02, max(w["start"], words[i + 1]["start"] - 0.02), w,
                                                          prev_end if i else None, words[i + 1]["start"], duration)),
-                          "reason": f"repeated word '{w['word']}' (possible restart; check meaning)"})
+                          "proposed": auto,
+                          "reason": (f"stutter: repeated '{w['word']}' (first instance removed)" if auto else
+                                     f"repeated word '{w['word']}' (often grammatical; review, not proposed)")})
+        marker = _marker_at(words, i)
+        if marker:
+            j = i + marker - 1
+            nxt = words[j + 1]["start"] if j + 1 < len(words) else duration
+            cut = list(_inside_neighbours(w["start"] - 0.02, words[j]["end"] + 0.02, w, prev_end if i else None,
+                                          nxt if j + 1 < len(words) else None, duration))
+            if env:
+                right = quiet_span(env, elevel, words[j]["end"], nxt, trail=j + 1 == len(words))
+                if right and loud(words[j]["end"], right[1]) <= SPEECH_GUARD_S:
+                    cut[1] = right[1]
+            text = " ".join(x["word"] for x in words[i:j + 1])
+            cands.append({"kind": "discourse_marker", "word": text, "word_index": i, "start_s": w["start"],
+                          "end_s": words[j]["end"], "cut": cut, "proposed": True,
+                          "reason": f"verbal padding '{text.strip(',')}' set off by commas"})
     edges = [(0.0, words[0]["start"] if words else duration, "leading silence")]
     edges += [(words[i]["end"], words[i + 1]["start"], "long pause") for i in range(len(words) - 1)]
     if words:
@@ -400,7 +459,7 @@ def candidates_from(words, duration, env=None):
     for a, b, label in edges:
         if b - a < PAUSE_S:
             continue
-        span = quiet_span(env, level, a, b, lead=label == "leading silence", trail=label == "trailing silence") if env else (a + HANDLE_S, b - HANDLE_S)
+        span = quiet_span(env, elevel, a, b, lead=label == "leading silence", trail=label == "trailing silence") if env else (a + HANDLE_S, b - HANDLE_S)
         if not span or span[1] - span[0] < 0.1:
             continue
         lo, hi = span
@@ -417,8 +476,8 @@ def candidates_from(words, duration, env=None):
     cands.sort(key=lambda c: c["cut"][0])
     merged = []
     for c in cands:
-        if c["kind"] == "repeat":
-            continue  # repeats are review items, not default cuts
+        if c.get("proposed") is False:
+            continue  # grammatical doubles are review items, not default cuts
         bridged = merged and any(_norm(w["word"]) not in FILLERS and w["end"] > merged[-1]["end_s"] and w["start"] < c["cut"][0]
                                  for w in words)
         if merged and c["cut"][0] <= merged[-1]["end_s"] + 0.05 and not bridged:

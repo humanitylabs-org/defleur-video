@@ -1,3 +1,27 @@
+# Unreleased: James' house style by default (captions, tight cuts, full-frame visuals)
+
+From Miguel's test on 0.6.5 (Hermes + Opus 5.5, 2-minute talking head): the edit kept a 3.1 s "um ... [dead air]" gap and ~12 s of
+pauses, the captions were mixed-case DejaVu with no visible active-word highlight, and one split-screen layout with the speaker in
+a corner tile held most of the video. Cause: the package shipped the deliberately neutral preset and conservative cut rules, not
+James' working pipeline.
+
+- **Captions:** `defaults/james-preset.json` is now the module default (neutral stays available as a project/owner preset). ALL CAPS
+  heavy sans (Montserrat Black; Arial Black via a licensed project font_path), 2-4 words per chunk broken at sentence ends, pauses and
+  long words, white words with the spoken word green (slightly larger, only while spoken), one yellow key term per chunk from
+  `plan.caption_emphasis`, black stroke + shadow, auto-fit inside the safe box. Image adds `fonts-montserrat`.
+- **Tight cuts by default:** stutters (first of a repeated word, except grammatical doubles like "that that") and comma-isolated
+  padding ("you know", "I mean", "like", "right", ...) are proposed with fillers and pauses; the guide tells the agent to present the
+  tight edit as the default and to propose a hook trim for warm-up openings.
+- **Noisy-room pauses:** `energy.py` adds Hann-windowed 300-3400 Hz voice-band and 300-8000 Hz tail-band envelopes. Silence screening
+  uses the voice band with a noise-floor-aware threshold, and word-tail protection uses the tail band, so low-frequency room rumble
+  no longer blocks a pause cut, while an untranscribed voiced "uh" still goes to owner review. On Miguel's output: 1 -> 17 proposed
+  cuts (10.6 s), the 0:33 3.1 s gap is now cut, the 1:37 gap (a real untranscribed "uh") stays as a review item.
+- **Visuals:** SKILL.md and `motion_contract` now require full-frame beats with full-bleed backgrounds, returns to the speaker
+  full-frame, no corner-tile/split-screen dashboard, phone-size type minimums, and one reading locus (caption integrated or suppressed).
+- Tests: rumble-vs-hidden-uh screen, stutter/padding vs grammatical doubles, caption colours (green active, yellow key term, nothing
+  green between words). Same 3 environment-dependent failures as main when run outside the container (GSAP/stable_whisper absent,
+  Pillow present in the service Python); all others pass.
+
 # Release: 0.6.5-testing (motion graphics by default, live render progress, agent check, SKILL.md)
 
 From the owner's one-sentence test on 0.6.4: Hermes (with GPT) delivered a clean edit with NO motion graphics, because the guide

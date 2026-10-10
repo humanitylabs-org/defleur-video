@@ -114,8 +114,8 @@ def _text(v, label, n=600):
 
 def validate_plan(plan, duration: float | None, files: set[str]) -> dict:
     """James' visual-plan.json shape plus the app's 'inserts' (fullscreen B-roll windows through #live)."""
-    if not isinstance(plan, dict) or set(plan) - {"beats", "caption_suppress", "inserts", "notes"}:
-        raise Rejected("plan must be an object with beats, optional caption_suppress, inserts, notes")
+    if not isinstance(plan, dict) or set(plan) - {"beats", "caption_suppress", "caption_emphasis", "inserts", "notes"}:
+        raise Rejected("plan must be an object with beats, optional caption_suppress, caption_emphasis, inserts, notes")
     beats = plan.get("beats")
     if not isinstance(beats, list) or not 1 <= len(beats) <= 200:
         raise Rejected("plan.beats must list 1..200 beats (James' contract: every beat is an explanatory change)")
@@ -141,6 +141,13 @@ def validate_plan(plan, duration: float | None, files: set[str]) -> dict:
         _text(r.get("reason"), f"caption_suppress {i} reason")
         if not any(b["caption_treatment"] == "suppress" and b["start"] <= s < e <= b["end"] for b in beats):
             raise Rejected(f"caption_suppress {i} must sit inside a beat whose caption_treatment is 'suppress' (James' encode.py rule)")
+    emph = plan.get("caption_emphasis", [])
+    if not isinstance(emph, list) or len(emph) > 400:
+        raise Rejected("plan.caption_emphasis must be a list of edited-timeline seconds (one key term per caption chunk)")
+    for i, t in enumerate(emph):
+        t = _num(t.get("t") if isinstance(t, dict) else t, f"caption_emphasis {i}")
+        if duration is not None and t > duration + 1e-6:
+            raise Rejected(f"caption_emphasis {i}: {t} s is past the edited timeline ({duration} s)")
     ins = plan.get("inserts", [])
     if not isinstance(ins, list) or len(ins) > 50:
         raise Rejected("plan.inserts must be a list of up to 50 fullscreen insert windows")

@@ -142,16 +142,23 @@ MOTION_CONTRACT = {
         "window.visualMode = (t) => 'live' | 'beat' | 'fullscreen-insert' (default from ledger.js; inside an insert window it must return 'fullscreen-insert').",
         "No network: every file must be in the submission (fonts as .woff2). Requests outside the composition are blocked and reported.",
         "Outside beat and insert windows the picture must be the plain live frame: hide all overlays there (checked in decoded pixels).",
-        "Keep text inside the essential rect x 120-960, y 220-1180; captions live in y 1240-1430 (James' neutral preset), so do not put graphics there while captions show.",
+        "Keep text inside the essential rect x 120-960, y 220-1180; captions live in y 1220-1460 (James' house preset), so do not put graphics there while captions show.",
     ],
     "beat_rules": (
         "Every beat makes an EXPLANATORY change: route a cause to an effect, replace a state, accumulate a quantity that changes behaviour, "
         "transform a topology, reveal a comparison, or return to the source with new meaning. No static title cards or opacity-only labels. "
         "Each beat in plan.beats needs numeric start/end (seconds of the EDITED timeline) and text fields spoken_anchor (the words it explains), "
         "viewer_inference, visual_family (documentary|diagram|photographic-metaphor|typographic-explanation|illustration), state_before, "
-        "state_after, causal_action, caption_treatment ('show' or 'suppress') and speaker_return. Give readable content dwell time."),
-    "captions": ("Captions are burned from the edited-audio words. Suppress them ONLY where the visual itself carries the same spoken words: "
-                 "list the range in plan.caption_suppress [{start, end, reason}] inside a beat whose caption_treatment is 'suppress'."),
+        "state_after, causal_action, caption_treatment ('show' or 'suppress') and speaker_return. Give readable content dwell time. "
+        "James' house layout: every beat is FULL-FRAME - a full-bleed background and the illustration/diagram scaled to fill the "
+        "1080x1920 canvas - and the picture returns to the speaker full-frame between beats. Never shrink the speaker into a corner "
+        "tile or keep one split-screen dashboard on screen for most of the video. Text at phone size: labels >= 44 px, headlines "
+        ">= 72 px. Vary the visual family from beat to beat and carry meaningful objects forward instead of resetting the scene."),
+    "captions": ("Captions are burned from the edited-audio words in James' house style (ALL CAPS heavy sans, green spoken word, "
+                 "black stroke). Mark ONE key term per chunk in yellow with plan.caption_emphasis [edited seconds inside that word] - "
+                 "the claim word, a few per minute. One reading locus: where the visual itself shows the same spoken words, list the "
+                 "range in plan.caption_suppress [{start, end, reason}] inside a beat whose caption_treatment is 'suppress'; never "
+                 "show the same words twice."),
     "inserts": ("Fullscreen inserts / B-roll: upload the media (create_asset_upload for .mp4/.jpg/.png/.webp, or base64 in submit_motion for small "
                 "images) and list plan.inserts [{start, end, asset: 'assets/clip.mp4', fit: 'cover'|'contain', clip_start_s, reason}]. During an "
                 "insert window #live shows the insert media (cropped to fill 1080x1920 for cover) instead of the speaker; audio stays the speaker's. "
@@ -173,9 +180,17 @@ MOTION_CONTRACT = {
 RULES = [
     "Edit for a coherent, faithful thought: keep claims, context, speaker meaning and sentence syntax. Never stitch words into a new meaning.",
     "Every deletion needs a truthful reason (filler, long pause, false start/restart, repeat, off-topic aside the owner approved).",
-    "Remove fillers (um/uh/erm) and shorten long pauses, but cut in the silence around them: keep ~0.1 s of handle so no consonant, vowel tail or breath release is clipped.",
+    "James' house tightening (default): remove EVERY filler (um/uh/erm), stutters and restarts (the first of a repeated word), "
+    "comma-isolated verbal padding ('..., you know, ...', '..., I mean, ...', '..., like, ...', '..., right, ...'), dead air at the start "
+    "and end, and shorten every pause over 0.5 s. proposed_cuts already contains all of these: present them as the default and let "
+    "the owner strike any they want to keep. Cut in the silence around them: keep ~0.1 s of handle so no consonant, vowel tail or "
+    "breath release is clipped.",
+    "Open on the first strong word: if the opening is warm-up ('Okay, so today I'm going to...'), propose starting at the hook "
+    "and say so in the approval question.",
     "If a tiny cut threatens a word, restore the whole clause instead of shaving it.",
-    "ASR can omit fillers and even whole sentences: start_edit proposes a pause only after measuring it near-silent; gaps with sound go to untranscribed_sound for the owner to review, never into proposed_cuts.",
+    "ASR can omit fillers and even whole sentences: start_edit proposes a pause only after measuring it near-silent in the voice band "
+    "(300-3400 Hz, above the room's noise floor), so room rumble no longer blocks a pause cut. Gaps with real voice in them go to "
+    "untranscribed_sound; most are an untranscribed 'uh' or breath: tell the owner the time and recommend cutting it after a listen.",
     "apply_cuts measures every cut you send (including hand-written ones); a cut with speech-like sound the transcript does not explain fails the reported gate unless the owner listened and you mark it owner_approved_sound: true.",
     "Fillers (um/uh/er/oh/ah) heard in only one transcript are reported separately (ASR can omit them); they are not lost content.",
     "Infer the language from ASR; ask the owner when it is uncertain.",
@@ -552,7 +567,7 @@ def do_apply_cuts(run: dict) -> dict:
 
     cand_rows = []
     for c in edit["candidates"]:
-        if c["kind"] not in ("filler", "repeat"):
+        if c["kind"] not in ("filler", "repeat", "discourse_marker"):
             continue
         gone = in_cut((c["start_s"] + c["end_s"]) / 2, cuts)
         cand_rows.append({"word": c["word"], "source_start_s": c["start_s"], "source_end_s": c["end_s"],

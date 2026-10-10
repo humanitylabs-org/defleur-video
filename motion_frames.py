@@ -180,7 +180,7 @@ def check(a) -> None:
     import numpy as np
     from PIL import Image
     sys.path.insert(0, str(a.caption_dir))
-    from caption_layer import _chunks, caption_engine  # James' adapter decides when a cue is drawn (honours suppression)
+    from caption_layer import caption_engine, style_chunks  # James' adapter decides when a cue is drawn (honours suppression)
     root = a.project
     ids = json.loads(a.base_map.read_text())
     plan = json.loads((root / "visual-plan.json").read_text())
@@ -259,7 +259,7 @@ def check(a) -> None:
     captions_ok = bool(on) and min(on) >= 0.01 and (not off or max(off) < 0.004)
     suppressed_ok = suppression_ok(sup, sup_rows)
     encode_ok = max(r["final_vs_capture_outside_band"] for r in rows) < 6.0
-    cues = len(_chunks(timeline["words"], int(style["max_words"]), int(style["max_chars"])))
+    cues = len(style_chunks(timeline["words"], style))
     result = {"frames": frames, "samples": rows, "caption_cues": cues, "cue_on_frames": sum(1 for f in range(frames) if cue(f)),
               "live_max_capture_vs_base": live_max, "live_threshold": a.live_threshold, "motion_threshold": a.motion_threshold,
               "no_motion_outside_planned_windows": live_max < a.live_threshold, "crop_matches_ledger": live_max < a.live_threshold,
