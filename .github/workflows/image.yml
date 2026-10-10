@@ -1,0 +1,43 @@
+name: Build, test and publish image
+# This repo is the source of truth for DeFleur Video. Every push to main builds the image,
+# runs the unit suite and James' audio gate inside the hardened container, then publishes
+# the exact tested image as ghcr.io/humanitylabs-org/defleur-video:<runtipi version>.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the release version
+        id: v
+        run: echo "version=$(python3 -c 'import json; print(json.load(open("runtipi/config.json"))["version"])')" >> "$GITHUB_OUTPUT"
+      - name: Recipe, wizard.md and service agree on the version
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          grep -q "image: ghcr.io/humanitylabs-org/defleur-video:$V\$" runtipi/docker-compose.yml
+          grep -q "^version: $V\$" wizard.md
+          grep -q "^VERSION = \"$V\"" service.py
+      - name: Build image; unit suite and audio gate in the hardened container
+        run: VIDEO_IMAGE=defleur-video:ci TMPDIR="$RUNNER_TEMP" sh test-container.sh
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the exact tested image
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          for tag in "$V" "main-${GITHUB_SHA::7}"; do
+            docker tag defleur-video:ci "ghcr.io/humanitylabs-org/defleur-video:$tag"
+            docker push "ghcr.io/humanitylabs-org/defleur-video:$tag"
+          done
