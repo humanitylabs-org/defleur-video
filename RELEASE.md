@@ -1,4 +1,6 @@
-# Unreleased: captions stay on for the whole video (house preset)
+# Release: 0.7.0-testing (captions always on; James' house style by default; image built in this repo)
+
+## Captions stay on for the whole video (house preset)
 
 From James' review of a motion split test (2026-10-10): the author suppressed captions on every motion beat, about 19 of 27 s,
 because the guide allowed "caption integrated or suppressed". House rule: captions run for the whole video.
@@ -12,7 +14,7 @@ because the guide allowed "caption integrated or suppressed". House rule: captio
   captions on, the delivery gate passes, 0 words lost, and captions show on 607/659 frames - every caption-free frame is a pause
   between words.
 
-# Unreleased: James' house style by default (captions, tight cuts, full-frame visuals)
+## James' house style by default (captions, tight cuts, full-frame visuals)
 
 From Miguel's test on 0.6.5 (Hermes + Opus 5.5, 2-minute talking head): the edit kept a 3.1 s "um ... [dead air]" gap and ~12 s of
 pauses, the captions were mixed-case DejaVu with no visible active-word highlight, and one split-screen layout with the speaker in
