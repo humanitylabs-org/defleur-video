@@ -881,8 +881,9 @@ def _result(fn, *a, **kw):
     "+ motion graphics + captions + crop), the exact tool order (one combined cut + motion-plan approval, then apply_cuts, submit_motion, "
     "capture_motion smoke/proof, render_final({'motion': true})), James DeFleur's motion_contract, limits and what is not automated."))
 def workflow_guide(ctx: Context, agent_harness: str | None = None, agent_model: str | None = None, profile_id: str = "original-v1") -> dict:
+    import profiles
     return {"agent_check": agent_check(agent_harness, agent_model, client_from(ctx)), **GUIDE,
-            "workflow_profile": api("GET", "/v1/workflows/" + urllib.parse.quote(profile_id, safe=""))}
+            "workflow_profile": profiles.get(profile_id)}
 
 
 @mcp.tool(description="List immutable workflow instruction profiles. Default remains original-v1; no model is selected by the app.")
