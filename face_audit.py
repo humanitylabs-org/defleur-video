@@ -152,7 +152,13 @@ def visual_ranges(edit, framing):
     breaks = set(framing.get('new_setup_at', []))
     output, used = [], set()
     for k, s in enumerate(edit['segments']):
-        emitted = [(f, sf) for f, sf in enumerate(indices) if s['output_start'] <= f / float(fps) < s['output_end']]
+        # Integer sample custody defines segment membership, even at NTSC rates.
+        if 'output_start_sample' in s:
+            start_time = Fraction(s['output_start_sample'], edit['sample_rate'])
+            end_time = Fraction(s['output_end_sample'], edit['sample_rate'])
+        else:
+            start_time, end_time = Fraction(str(s['output_start'])), Fraction(str(s['output_end']))
+        emitted = [(f, sf) for f, sf in enumerate(indices) if start_time <= Fraction(f, 1) / fps < end_time]
         if not emitted:
             raise ValueError('kept segment has no output picture frame')
         cuts = []

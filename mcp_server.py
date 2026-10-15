@@ -570,7 +570,7 @@ def do_apply_cuts(run: dict) -> dict:
     pcm_proof = artifact(asm["id"], "pcm-identity.json")
     hashes = {a["name"]: a["sha256"] for a in asm["result"]["artifacts"]}
     if (pcm_proof.get("source_audio_job") != edit["jobs"]["source_audio"] or
-        any(pcm_proof.get(k) != hashes.get(n) for k, n in
+        any(not hashes.get(n) or pcm_proof.get(k) != hashes[n] for k, n in
             (("source_sha256", "source.wav"), ("edited_sha256", "edited.wav"), ("edit_map_sha256", "edit-map.json")))):
         raise ToolError("PCM identity custody does not match this assembly")
     review_words = resolve_pcm_variance(review_words, kept_words, assembled_map, pcm_proof)

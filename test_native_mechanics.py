@@ -78,6 +78,33 @@ class PCMIdentityTests(unittest.TestCase):
         r = editing.resolve_pcm_variance(self.review(), [self.word], other, proof)
         self.assertTrue(r['fail'])
 
+    def test_missing_and_duplicate_word_indexes_cannot_resolve(self):
+        proof = editing.pcm_identity(self.source, self.edited, self.edit)
+        for kept in ([dict(self.word, index=None)], [self.word, dict(self.word, start=.2, end=.3)]):
+            review = self.review(kept[0])
+            self.assertTrue(editing.resolve_pcm_variance(review, kept, self.edit, proof)['fail'])
+
+    def test_actual_assembler_ntsc_map_and_video_partition(self):
+        import subprocess, sys
+        helper = Path('/opt/defleur/skills/defleur-audio/scripts/assemble_pcm.py')
+        if not helper.exists():
+            self.skipTest('bundled helper available in normal container suite')
+        self.wav(self.source, self.pcm, rate=48000)
+        # A longer real PCM file with sample-exact segment edges off frame boundaries.
+        self.wav(self.source, self.pcm * 200, rate=48000)
+        (self.root/'edit-plan.json').write_text(json.dumps({'segments': [
+            {'start_s': .123, 'end_s': 1.234, 'reason': 'test'},
+            {'start_s': 2.123, 'end_s': 3.456, 'reason': 'test'}]}))
+        subprocess.run([sys.executable, str(helper), str(self.root), '--fps', '30000/1001', '--source-frames', '125'], check=True, capture_output=True)
+        mapped = json.loads((self.root/'edit-map.json').read_text())
+        self.assertTrue(editing.pcm_identity(self.source, self.edited, mapped)['pass'])
+        ranges = face_audit.visual_ranges(mapped, {'shot_boundaries': [{'source_frame': 20}]})
+        ledger = {'ranges': [dict(start=r['output_start'], end=r['output_end'], crop=[i,0,4,8]) for i,r in enumerate(ranges)]}
+        from fractions import Fraction
+        for f,sf in enumerate(mapped['source_frame_indices']):
+            r = ranges[final_render.crop_at(ledger, f/float(Fraction(mapped['fps'])))[0]]
+            self.assertIn(sf, r['source_frames'])
+
 
 class ShotRangesTests(unittest.TestCase):
     def setUp(self):

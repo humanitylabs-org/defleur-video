@@ -723,6 +723,9 @@ def _pcm_assemble(ctx, value, source, metadata):
     mapped = json.loads((ctx.root / "edit-map.json").read_text())
     from editing import pcm_identity
     identity = pcm_identity(ctx.root / "source.wav", ctx.root / "edited.wav", mapped)
+    native_sha = next((a["sha256"] for a in job["result"]["artifacts"] if a["name"] == "source.wav"), None)
+    if not native_sha or identity["source_sha256"] != native_sha:
+        raise Rejected("PCM identity source does not match native source-audio receipt")
     identity.update(source_audio_job=value["audio_job"], edit_map_sha256=sha(ctx.root / "edit-map.json"))
     ctx.write("pcm-identity.json", identity)
     if not identity["pass"]:

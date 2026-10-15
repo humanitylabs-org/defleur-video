@@ -640,7 +640,9 @@ def pcm_identity(source, edited, mapped):
     import math
     import wave
     from pathlib import Path
-    digest = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+    def digest(p):
+        with Path(p).open('rb') as f:
+            return hashlib.file_digest(f, 'sha256').hexdigest()
     proof = {"version": 1, "pass": False, "segments": [], "errors": [],
              "source_sha256": digest(source), "edited_sha256": digest(edited),
              "map_content_sha256": hashlib.sha256(json.dumps(mapped, sort_keys=True, allow_nan=False).encode()).hexdigest(),
@@ -704,7 +706,9 @@ def resolve_pcm_variance(review, kept, mapped, proof):
     map_hash = hashlib.sha256(json.dumps(mapped, sort_keys=True, allow_nan=False).encode()).hexdigest()
     if not proof.get('pass') or proof.get('map_content_sha256') != map_hash:
         return out
-    by_index = {w['index']: w for w in kept}
+    from collections import Counter
+    counts = Counter(w.get('index') for w in kept)
+    by_index = {w['index']: w for w in kept if type(w.get('index')) is int and counts[w['index']] == 1}
     remaining = []
     rate = mapped['sample_rate']
     for row in near:
