@@ -41,7 +41,7 @@ def crop_at(ledger: dict, t: float) -> list[int]:
     for row in ranges:
         if row["start"] <= t < row["end"]:
             return row["crop"]
-    return ranges[-1]["crop"] if t >= ranges[-1]["end"] else ranges[0]["crop"]
+    raise ValueError(f"crop ledger does not cover edited time {t}")
 
 
 def fit(img, cw, ch, mode):

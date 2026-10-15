@@ -9,6 +9,7 @@ from pathlib import Path
 import editing
 import face_audit
 import final_render
+import motion_frames
 import workflow
 
 
@@ -122,6 +123,7 @@ class ShotRangesTests(unittest.TestCase):
         ledger = {'ranges': [dict(start=r['output_start'], end=r['output_end'], crop=[i, 0, 4, 8]) for i,r in enumerate(ranges)]}
         for f in range(48):
             self.assertEqual(final_render.crop_at(ledger, f/24)[0], int(f >= 19))
+            self.assertEqual(motion_frames.crop_at(ledger, f/24), final_render.crop_at(ledger, f/24))
 
     def test_time_boundary_and_segment_compatibility(self):
         a = face_audit.visual_ranges(self.edit, {'shot_boundaries': [{'source_frame': 139}]})
@@ -146,9 +148,10 @@ class ShotRangesTests(unittest.TestCase):
                 workflow._framing({'shot_boundaries': [row]}, 1)
 
     def test_coverage_gap_fails_closed(self):
-        with self.assertRaises(ValueError):
-            final_render.crop_at({'ranges': [{'start': 0., 'end': .5, 'crop': [0,0,4,8]},
-                                            {'start': 1., 'end': 2., 'crop': [1,0,4,8]}]}, .75)
+        for consumer in (final_render.crop_at, motion_frames.crop_at):
+            with self.assertRaises(ValueError):
+                consumer({'ranges': [{'start': 0., 'end': .5, 'crop': [0,0,4,8]},
+                                     {'start': 1., 'end': 2., 'crop': [1,0,4,8]}]}, .75)
 
 
 if __name__ == '__main__':
