@@ -1207,6 +1207,8 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex project id")
         opts = options or {}
+        if isinstance(opts, dict) and 'base_render_job' in opts and type(opts.get('music')) is not bool:
+            raise ToolError('base_render_job requires an explicit boolean music variant')
         if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "sound_mix_job", "music", "base_render_job"}:
             raise ToolError("options: motion, framing, plain_reason, sound_mix_job, music (bool), base_render_job")
         cuts = runs_for(project_id, "apply_cuts", "done")

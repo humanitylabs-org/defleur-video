@@ -65,7 +65,7 @@ class NativeSoundTests(unittest.TestCase):
                 stored = request("POST", route + "/sound-assets", asset)
                 cue = {"asset_id": stored["asset_id"], "role": "sfx", "start": .2, "end": 2.8, "source_start": 0, "gain_db": -22, "fade_s": .05}
                 plan = {"version": 1, "cues": [cue, {**cue, "role": "music", "gain_db": -28}]}
-                for bad in ({**cue, "end": -1}, {**cue, "gain_db": 0}, {**cue, "asset_id": "../bad"}):
+                for bad in ({**cue, "end": -1}, {**cue, "gain_db": 0}, {**cue, "asset_id": "../bad"}, {**cue, "gain_db": -32}, {**cue, "role": "music", "gain_db": -32}):
                     with self.assertRaises(urllib.error.HTTPError):
                         request("POST", route + "/soundtrack", {"version": 1, "cues": [bad]})
                 submitted = request("POST", route + "/soundtrack", plan)
@@ -78,8 +78,11 @@ class NativeSoundTests(unittest.TestCase):
                 shutil.copyfile(folder / "music-off.wav", folder / "mix-input.wav")
                 subprocess.run(["ffmpeg", "-v", "error", "-i", str(folder / "mix-input.wav"), "-c:a", "aac", "-b:a", "192k", str(root / "fixture.m4a")], check=True)
                 subprocess.run(["ffmpeg", "-v", "error", "-i", str(root / "fixture.m4a"), "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(folder / "final-audio.wav")], check=True)
-                delivery = json.loads(subprocess.check_output(["/opt/venv/bin/python", "-I", str(profiles.ROOT / "soundtrack.py"), "check", str(folder)], text=True))
+                delivery = json.loads(subprocess.check_output(["/opt/venv/bin/python", "-I", str(profiles.ROOT / "soundtrack.py"), "check", str(folder), "music-off"], text=True))
                 self.assertTrue(delivery["pass"], delivery)
+                wrong = json.loads(subprocess.check_output(["/opt/venv/bin/python", "-I", str(profiles.ROOT / "soundtrack.py"), "check", str(folder), "music-on"], text=True))
+                self.assertFalse(wrong['pass'])
+                self.assertFalse(wrong['selected_mix_custody'])
                 evidence = {"fixture": "owned generated tone, not speech or final creative acceptance", "mix_job": mixed["id"], "summary": summary, "decoded_mix_check": delivery,
                             "profiles": listing, "host": os.uname().nodename}
                 if os.environ.get("NATIVE_SOUND_EVIDENCE"):

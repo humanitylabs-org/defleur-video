@@ -46,7 +46,7 @@ and motion_ready. A successful health response alone is not workflow readiness.
 5. `POST .../soundtrack` accepts `{version:1,cues:[{asset_id,role,start,end,
    source_start,gain_db,fade_s}]}` and returns `plan_sha256`. Timings are edited
    seconds; no silent looping or padding. Gain is relative to local dialogue
-   RMS: -36..-18 dB SFX, -36..-24 dB music. Fades >=5ms and <= half cue length.
+   RMS: -28..-16 dB SFX, -28..-20 dB music (trial bounds; audition still required). Fades >=5ms and <= half cue length.
    At least one SFX is required. Overlap exceeding aggregate limits is rejected.
 6. `POST .../stages/sound-mix` with `{assemble_job,plan_sha256}`. Poll native
    job status; retain the returned mix receipt, credits, dual WAV hashes and

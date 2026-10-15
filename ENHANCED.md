@@ -22,8 +22,10 @@ Only upload trusted licensed sounds; do not infer that a downloadable asset is l
 
 Use subtle but audible, relevant SFX, not a constant effect wash. Cues use edited seconds,
 start/end, source_start, gain_db, fade_s and role (sfx/music). gain_db is relative to the
-local dialogue RMS and must be at most -18 dB for SFX or -24 dB for music; the app records
-actual stem level and rejects inaudible stems or speech-free cue windows. Music defaults
+local dialogue RMS. Trial bounds are -28..-16 dB for SFX and -28..-20 dB for music;
+start music near -22 dB and audition the actual clip, adjusting within those bounds.
+The app records stem levels and rejects silent assets or speech-free cue windows.
+These numeric bounds prevent replaying the failed -32 dB treatment; they do not prove audibility. Music defaults
 OFF. B-off contains dialogue plus SFX; B-on contains the identical picture plus those SFX
 and optional music. Listen to both; machine RMS evidence does not prove perceptual quality.
 Never claim human listening, editorial approval or delivery approval from numeric checks.

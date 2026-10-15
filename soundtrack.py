@@ -12,6 +12,8 @@ import wave
 from pathlib import Path
 from urllib.parse import urlsplit
 import sys
+import os
+import tempfile
 # Native helper runs with -I; only this immutable application source directory
 # may be imported, never a project or caller-supplied directory.
 if __name__ == "__main__":
@@ -21,6 +23,7 @@ from editing import Rejected
 MAX_BYTES = 32 * 1024 * 1024
 HEX = re.compile(r"^[a-f0-9]{64}$")
 KINDS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+GAIN_LIMITS = {"sfx": (-28, -16), "music": (-28, -20)}
 
 
 def sha(path):
@@ -78,7 +81,13 @@ def store_asset(project, value):
             raise Rejected("existing audio asset changed")
     meta = folder / (asset_id + ".json")
     if not meta.exists():
-        meta.write_bytes(canonical(record))
+        fd, temporary = tempfile.mkstemp(prefix='.receipt-', dir=folder)
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                f.write(canonical(record)); f.flush(); os.fsync(f.fileno())
+            os.replace(temporary, meta)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
     return record
 
 
@@ -113,8 +122,9 @@ def validate_plan(project, plan, duration=None):
         start, end, source_start, gain, fade = [number(cue[k], k) for k in ("start", "end", "source_start", "gain_db", "fade_s")]
         if not 0 <= start < end <= (duration if duration is not None else 600) or source_start < 0:
             raise Rejected("cue timing outside edited timeline")
-        if not -36 <= gain <= (-18 if cue["role"] == "sfx" else -24):
-            raise Rejected("cue gain outside audible dialogue-relative safe range")
+        lo, hi = GAIN_LIMITS[cue["role"]]
+        if not lo <= gain <= hi:
+            raise Rejected(f"cue gain outside trial dialogue-relative range {lo}..{hi} dB; audibility still needs audition")
         if not 0.005 <= fade <= min(2, (end - start) / 2):
             raise Rejected("cue fade must be 5ms..2s and fit cue")
     return plan
@@ -143,12 +153,14 @@ def load(project, digest):
     return json.loads(path.read_text())
 
 
-def delivery_check(root):
+def delivery_check(root, variant):
     import numpy as np
+    if variant not in ('music-off', 'music-on'):
+        raise Rejected('an exact requested music variant is required')
     receipt = json.loads((root / "soundtrack-receipt.json").read_text())
     dialogue_ok = sha(root / "dialogue-premix.wav") == receipt["dialogue_sha256"]
     selected = sha(root / "mix-input.wav")
-    mix_ok = selected in [receipt["outputs"][k]["sha256"] for k in ("music-off", "music-on")]
+    mix_ok = selected == receipt["outputs"][variant]["sha256"]
     arrays = []
     for name in ("mix-input.wav", "final-audio.wav"):
         with wave.open(str(root / name)) as w:
@@ -161,7 +173,7 @@ def delivery_check(root):
     correlation = float(np.corrcoef(a[:n], b[:n])[0, 1])
     peak = float(np.max(np.abs(b)))
     passed = dialogue_ok and mix_ok and length_ok and math.isfinite(correlation) and correlation >= .98 and peak < 1
-    return {"pass": passed, "dialogue_custody": dialogue_ok, "selected_mix_custody": mix_ok, "decoded_length": length_ok,
+    return {"pass": passed, "requested_variant": variant, "dialogue_custody": dialogue_ok, "selected_mix_custody": mix_ok, "decoded_length": length_ok,
             "decoded_mix_correlation": correlation if math.isfinite(correlation) else None, "decoded_sample_peak_dbfs": 20 * math.log10(peak) if peak else None,
             "human_listening_approval": False, "scope": "sample peak, decoded PCM correlation and source custody; not true-peak/loudness or perceptual approval"}
 
@@ -186,7 +198,7 @@ def mix(ctx, value, source, metadata):
         duration = (end - start) / rate
         # Protocol whitelist prevents container formats referring to external/network resources.
         raw = ctx.native(["/usr/bin/ffmpeg", "-v", "error", "-xerror", "-protocol_whitelist", "file,pipe", "-threads", "1",
-                          "-ss", str(cue["source_start"]), "-i", path, "-t", str(duration), "-map", "0:a:0",
+                          "-ss", f'{cue["source_start"]:.6f}', "-i", path, "-t", f'{duration:.6f}', "-map", "0:a:0",
                           "-f", "s16le", "-ar", str(rate), "-ac", str(channels), "pipe:1"],
                          timeout=120, cpu=120, max_log=MAX_BYTES * 4, as_limit=2 * 1024**3, cwd=ctx.root)
         samples = np.frombuffer(raw, dtype="<i2").astype(np.float64).reshape(-1, channels) / 32768
@@ -209,7 +221,7 @@ def mix(ctx, value, source, metadata):
     for cue in plan["cues"]:
         a, b = round(cue["start"] * rate), round(cue["end"] * rate)
         speech_rms = float(np.sqrt(np.mean(speech[a:b] ** 2)))
-        for role, limit in (("sfx", -18), ("music", -24)):
+        for role, (_, limit) in GAIN_LIMITS.items():
             stem_rms = float(np.sqrt(np.mean(stems[role][a:b] ** 2)))
             if stem_rms > speech_rms * 10 ** (limit / 20) * 1.001:
                 raise Rejected("overlapping cues exceed aggregate dialogue-relative limit")
@@ -235,7 +247,7 @@ def mix(ctx, value, source, metadata):
 
 if __name__ == "__main__":
     if sys.argv[1] == "check":
-        print(json.dumps(delivery_check(Path(sys.argv[2]))))
+        print(json.dumps(delivery_check(Path(sys.argv[2]), sys.argv[3])))
     elif sys.argv[1] == "mix":
         import shutil
         from service import native

@@ -468,6 +468,8 @@ def validate(stage, value, metadata, lookup):
             if value.get("music") and not mix["result"]["summary"]["has_music"]:
                 raise Rejected("music-on requested but no music in plan")
         if "base_render_job" in value:
+            if "music" not in value:
+                raise Rejected("picture reuse requires an explicit music variant")
             base, _ = lookup(value["base_render_job"], {"final-render"})
             original = base["plan"]["input"]
             if any(original.get(k) != value.get(k) for k in ("assemble_job", "crop_job", "edited_asr_job", "proof_job", "preset_job", "sound_mix_job")):
@@ -933,14 +935,20 @@ def _sound_variant(ctx, value, source, metadata):
         raise Rejected("sound variant changed decoded picture frames")
     with wave.open(str(root / "final-audio.wav")) as w:
         samples = w.getnframes()
-    ctx.write("decoded-final.json", {**decoded, "final_sha256": sha(root / "final.mp4"), "audio_pcm_sha256": sha(root / "final-audio.wav"), "audio_samples": samples})
+    ctx.write("decoded-final.json", {"final_sha256": sha(root / "final.mp4"), "audio_pcm": "final-audio.wav",
+              "audio_pcm_sha256": sha(root / "final-audio.wav"), "audio_samples": samples,
+              "video_framemd5_sha256": picture_hash, "video_frames_decoded": len(hashes),
+              "decoder": "ffmpeg -xerror (framemd5 + PCM s16 48 kHz)"})
     prior, _ = ctx.ref(base_id, {"final-render"}, "final-integrity.json")
     integrity = json.loads(prior.read_text())
     regions = json.loads(ctx.app("final_render.py", ["regions", root / "source.wav", root / "final-audio.wav", root / "edit-map.json"], timeout=300, cpu=600, as_limit=4 * 1024**3))
-    ctx.write("final-integrity.json", {**integrity, "source_regions": regions, "media_verification_sha256": sha(root / "media-verification.json"), "picture_reused_from": base_id, "identical_decoded_picture": True})
+    ctx.write("final-integrity.json", {**integrity, "full_decode_pass": verified['full_decode_pass'] is True and len(hashes) == verified['frames'],
+              "source_regions": regions, "media_verification_sha256": sha(root / "media-verification.json"),
+              "picture_reused_from": base_id, "identical_decoded_picture": True})
     return {**base["result"]["summary"], "music": value.get("music", False), "base_render_job": base_id, "identical_decoded_picture": True,
-            "final_sha256": verified["sha256"], "final_bytes": (root / "final.mp4").stat().st_size, "phase_seconds": {},
-            "checks": {**base["result"]["summary"]["checks"], "min_source_region_correlation": min(r["correlation"] for r in regions)}}
+            "duration_s": round(verified['audio_duration'], 3), "final_sha256": verified["sha256"], "final_bytes": (root / "final.mp4").stat().st_size, "phase_seconds": {},
+            "checks": {**base["result"]["summary"]["checks"], "full_decode": verified['full_decode_pass'] is True and len(hashes) == verified['frames'],
+                       "min_source_region_correlation": min(r["correlation"] for r in regions)}}
 
 
 def _final_render(ctx, value, source, metadata):
@@ -1314,7 +1322,8 @@ def _delivery_gate(ctx, value, source, metadata):
         for name in ("soundtrack-receipt.json", "soundtrack-plan.json", "credits.json", "dialogue-premix.wav", "edited.wav"):
             # Keep the speech-only gate's edited.wav intact.
             ctx.ref(rj, {"final-render"}, name, "mix-input.wav" if name == "edited.wav" else name)
-        sound_check = json.loads(ctx.app("soundtrack.py", ["check", root], timeout=120, cpu=240, as_limit=4 * 1024**3))
+        variant = 'music-on' if render['plan']['input'].get('music', False) else 'music-off'
+        sound_check = json.loads(ctx.app("soundtrack.py", ["check", root, variant], timeout=120, cpu=240, as_limit=4 * 1024**3))
         ctx.write("sound-delivery.json", sound_check)
     code, out, err = ctx.run("audio_gate", [root, "--stage", "delivery"], timeout=120, check=False, as_limit=2 * 1024**3)
     result = {"pass": code == 0 and (sound_check is None or sound_check["pass"]), "soundtrack": sound_check, "exit_code": code, "stage": "delivery", "output": json.loads(out) if code == 0 else None,
