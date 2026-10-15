@@ -11,9 +11,11 @@ docker run --rm --network none --read-only --cap-drop ALL \
   --pids-limit 2048 --tmpfs /scratch:rw,noexec,nosuid,size=1024m,mode=1777 \
   -e TMPDIR=/scratch -e VIDEO_DISK_RESERVE_MB=64 \
   --mount "type=bind,source=$ROOT/test_service.py,target=/app/test_service.py,readonly" \
+  --mount "type=bind,source=$ROOT/test_native_mechanics.py,target=/app/test_native_mechanics.py,readonly" \
+  --mount "type=bind,source=$ROOT/test_native_sound.py,target=/app/test_native_sound.py,readonly" \
   --entrypoint /usr/bin/python3 "$IMAGE" -c '
 import unittest, pathlib, json, os, subprocess
 gate = subprocess.run(["/opt/venv/bin/python", "-I", "/opt/defleur/skills/defleur-audio/scripts/test_audio_gate.py"])
-r = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover("/app", pattern="test_service.py"))
+r = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover("/app", pattern="test_*.py"))
 print(json.dumps({"uid": os.getuid(), "test_audio_gate_rc": gate.returncode, **{n: pathlib.Path("/sys/fs/cgroup/" + n).read_text().strip() for n in ("memory.peak", "memory.max", "memory.swap.max", "cpu.max")}}))
 raise SystemExit(gate.returncode or not r.wasSuccessful())'
