@@ -1,0 +1,13 @@
+# Optional override when Docker's VM has no host bind mount of DATA_ROOT.
+# Verify Docker's entire VM/data disk is on the external work drive first.
+# No daemon restart, reconfiguration or unrelated workload changes required.
+services:
+  video:
+    volumes:
+      - video-data:/data
+  transcriber:
+    volumes:
+      - model-data:/home/ubuntu/.cache/huggingface
+volumes:
+  video-data:
+  model-data:

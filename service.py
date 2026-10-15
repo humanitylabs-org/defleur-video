@@ -908,6 +908,9 @@ class Store:
 
     def submit_stage(self, identifier, stage, value):
         metadata = self.project(identifier)
+        pinned = metadata.get("workflow_profile", profiles.pin())
+        if pinned["instruction_sha256"] != profiles.get(pinned["id"])["instruction_sha256"]:
+            raise Rejected("pinned workflow instructions differ from this runtime; restore the pinned version")
         workflow.validate(stage, value, metadata, lambda jid, stages: self.stage_ref(identifier, jid, stages))
         if __import__("shutil").disk_usage(self.root).free < 512 * 1024 * 1024:
             raise Rejected("workflow stages require 512 MiB free scratch reserve")
@@ -918,7 +921,10 @@ class Store:
             if c.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0] >= 2:
                 raise Rejected("queue full")
             jid = uuid.uuid4().hex
-            plan = {"workflow_stage": stage, "input": value, "workflow_profile": metadata.get("workflow_profile", profiles.pin())}
+            current = json.loads(c.execute("SELECT metadata FROM projects WHERE id=?", (identifier,)).fetchone()[0])
+            if current.get("workflow_profile", profiles.pin()) != pinned:
+                raise Rejected("workflow selection changed during submission; retry")
+            plan = {"workflow_stage": stage, "input": value, "workflow_profile": pinned}
             c.execute("INSERT INTO jobs VALUES(?,?,'queued',?,NULL,NULL,?)", (jid, identifier, json_bytes(plan).decode(), time.time()))
         return self.job(jid)
 

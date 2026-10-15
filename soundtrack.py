@@ -56,6 +56,12 @@ def store_asset(project, value):
     folder = project / "sound-assets"
     folder.mkdir(exist_ok=True)
     path = folder / (asset_id + ext)
+    if not path.exists():
+        blobs = [p for p in folder.iterdir() if p.suffix in KINDS]
+        if len(blobs) >= 64 or sum(p.stat().st_size for p in blobs) + len(data) > 256 * 1024**2:
+            raise Rejected("sound asset project quota exceeded (64 assets / 256MiB)")
+        if __import__("shutil").disk_usage(folder).free < len(data) + 512 * 1024**2:
+            raise Rejected("insufficient disk reserve for sound upload")
     record = {"asset_id": asset_id, "sha256": value["sha256"], "extension": ext, "bytes": len(data), "license_receipt": receipt,
               "license_verified": False, "receipt_basis": "operator-supplied; retained for review"}
     # Immutable content-addressed blobs; existing uploads cannot be overwritten.
@@ -117,6 +123,8 @@ def submit(project, plan):
     folder.mkdir(exist_ok=True)
     path = folder / (digest + ".json")
     if not path.exists():
+        if len(list(folder.glob("*.json"))) >= 64:
+            raise Rejected("soundtrack plan quota exceeded")
         path.write_bytes(data)
     return {"plan_sha256": digest, "plan": plan}
 
