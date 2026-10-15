@@ -93,6 +93,9 @@ STAGES = {
 }
 
 
+STAGES["sound-mix"] = (900, "native licensed sound plan validation, dialogue-relative PCM stems and dual mixes")
+
+
 def deadline_for(stage):
     return STAGES.get(stage, (180, ""))[0]
 
@@ -442,9 +445,33 @@ def validate(stage, value, metadata, lookup):
         _render_refs(value, lookup)
         if value["mode"] not in ("smoke", "proof"):
             raise Rejected("motion-capture mode must be smoke or proof (full capture runs inside final-render)")
+    elif stage == "sound-mix":
+        _obj(value, {"assemble_job", "plan_sha256"})
+        lookup(value["assemble_job"], {"pcm-assemble"})
+        if not metadata.get("workflow_profile", {}).get("soundtrack_enabled"):
+            raise Rejected("sound mix requires enhanced workflow profile")
+        if not __import__("soundtrack").HEX.fullmatch(str(value["plan_sha256"])):
+            raise Rejected("invalid soundtrack plan SHA-256")
     elif stage == "final-render":
-        _obj(value, {"assemble_job", "crop_job", "edited_asr_job"}, {"preset_job", "proof_job"})
+        _obj(value, {"assemble_job", "crop_job", "edited_asr_job"}, {"preset_job", "proof_job", "sound_mix_job", "music", "base_render_job"})
         _render_refs(value, lookup)
+        if "music" in value and type(value["music"]) is not bool:
+            raise Rejected("music must be boolean")
+        if ("music" in value or "base_render_job" in value) and "sound_mix_job" not in value:
+            raise Rejected("music variant requires sound_mix_job")
+        if "sound_mix_job" in value:
+            if not metadata.get("workflow_profile", {}).get("soundtrack_enabled"):
+                raise Rejected("original profile remains dialogue only")
+            mix, _ = lookup(value["sound_mix_job"], {"sound-mix"})
+            if mix["result"]["summary"]["assemble_job"] != value["assemble_job"]:
+                raise Rejected("sound mix must use the same assembly")
+            if value.get("music") and not mix["result"]["summary"]["has_music"]:
+                raise Rejected("music-on requested but no music in plan")
+        if "base_render_job" in value:
+            base, _ = lookup(value["base_render_job"], {"final-render"})
+            original = base["plan"]["input"]
+            if any(original.get(k) != value.get(k) for k in ("assemble_job", "crop_job", "edited_asr_job", "proof_job", "preset_job", "sound_mix_job")):
+                raise Rejected("picture reuse must retain every render input except music")
         if "proof_job" in value:
             proof, _ = lookup(value["proof_job"], {"motion-capture"})
             ps = proof["result"]["summary"]
@@ -556,7 +583,7 @@ def run(stage, value, source, root, metadata, native, lookup, deadline, input_ar
             raise Rejected(f"Unexpected helper output: {path.name}")
         artifacts.append({"name": path.name, "sha256": sha(path), "bytes": path.stat().st_size,
                           "content_type": {".wav": "audio/wav", ".png": "image/png", ".mp4": "video/mp4"}.get(path.suffix, "application/json")})
-    return {"stage": stage, "helpers": ctx.used, "helper_sha256": next(iter(ctx.used.values()), None),
+    return {"stage": stage, "workflow_profile": metadata.get("workflow_profile", __import__("profiles").pin()), "helpers": ctx.used, "helper_sha256": next(iter(ctx.used.values()), None),
             "summary": summary, "artifacts": artifacts,
             "scope": "Real mechanics with hash-bound artifacts. Evidence for operator review; not human listening, not delivery approval."}
 
@@ -869,7 +896,49 @@ def _locked_words(asr_words, duration):
     return words, adjusted
 
 
+def _sound_variant(ctx, value, source, metadata):
+    """Native alternate AAC encode from the exact already-verified picture stream."""
+    base_id = value["base_render_job"]
+    base, _ = ctx.lookup(base_id, {"final-render"})
+    root = ctx.root
+    excluded = {"final.mp4", "final-audio.wav", "decoded-final.json", "final-integrity.json", "media-verification.json", "edited.wav", "sound-delivery.json"}
+    for item in base["result"]["artifacts"]:
+        if item["name"] not in excluded:
+            path, _ = ctx.ref(base_id, {"final-render"}, item["name"])
+            shutil.copyfile(path, root / item["name"])
+    picture, _ = ctx.ref(base_id, {"final-render"}, "final.mp4")
+    wav, _ = ctx.ref(value["sound_mix_job"], {"sound-mix"}, "music-on.wav" if value.get("music", False) else "music-off.wav", "edited.wav")
+    ctx.progress("sound-variant-encode", picture_reused_from=base_id)
+    ctx.native(["/usr/bin/ffmpeg", "-v", "error", "-xerror", "-n", "-i", picture, "-i", wav,
+                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", root / "final.mp4"],
+               timeout=600, cpu=600, file_limit=8 * 1024**3, cwd=root)
+    verified = json.loads(ctx.run("encode", [root, "--verify-only"], flags=("-s", "-E"), timeout=1200, cpu=2400, as_limit=6 * 1024**3))
+    with wave.open(str(wav)) as w:
+        channels = w.getnchannels()
+    ctx.native(["/usr/bin/ffmpeg", "-v", "error", "-xerror", "-n", "-i", root / "final.mp4", "-map", "0:a:0", "-c:a", "pcm_s16le", "-ar", "48000", "-ac", str(channels), root / "final-audio.wav"],
+               timeout=300, cpu=600, file_limit=1024**3, cwd=root)
+    raw = ctx.native(["/usr/bin/ffmpeg", "-v", "error", "-xerror", "-i", root / "final.mp4", "-map", "0:v:0", "-f", "framemd5", "-"], timeout=900, cpu=1800, max_log=8 * 1024**2, cwd=root)
+    hashes = [line.rsplit(",", 1)[1].strip() for line in raw.decode().splitlines() if line and not line.startswith("#")]
+    picture_hash = __import__("hashlib").sha256("\n".join(hashes).encode()).hexdigest()
+    prior, _ = ctx.ref(base_id, {"final-render"}, "decoded-final.json")
+    decoded = json.loads(prior.read_text())
+    if picture_hash != decoded["video_framemd5_sha256"] or len(hashes) != decoded["video_frames_decoded"]:
+        raise Rejected("sound variant changed decoded picture frames")
+    with wave.open(str(root / "final-audio.wav")) as w:
+        samples = w.getnframes()
+    ctx.write("decoded-final.json", {**decoded, "final_sha256": sha(root / "final.mp4"), "audio_pcm_sha256": sha(root / "final-audio.wav"), "audio_samples": samples})
+    prior, _ = ctx.ref(base_id, {"final-render"}, "final-integrity.json")
+    integrity = json.loads(prior.read_text())
+    regions = json.loads(ctx.app("final_render.py", ["regions", root / "source.wav", root / "final-audio.wav", root / "edit-map.json"], timeout=300, cpu=600, as_limit=4 * 1024**3))
+    ctx.write("final-integrity.json", {**integrity, "source_regions": regions, "media_verification_sha256": sha(root / "media-verification.json"), "picture_reused_from": base_id, "identical_decoded_picture": True})
+    return {**base["result"]["summary"], "music": value.get("music", False), "base_render_job": base_id, "identical_decoded_picture": True,
+            "final_sha256": verified["sha256"], "final_bytes": (root / "final.mp4").stat().st_size, "phase_seconds": {},
+            "checks": {**base["result"]["summary"]["checks"], "min_source_region_correlation": min(r["correlation"] for r in regions)}}
+
+
 def _final_render(ctx, value, source, metadata):
+    if "base_render_job" in value:
+        return _sound_variant(ctx, value, source, metadata)
     phases, _t = {}, [time.monotonic()]
 
     def lap(name):
@@ -935,6 +1004,12 @@ def _final_render(ctx, value, source, metadata):
                 nofile=128, file_limit=64 * 1024**2, threads="2")
         lap("live_frames_crop")
         motion_info = None
+    if "sound_mix_job" in value:
+        # Unlink the assembly hardlink: the immutable dialogue evidence must never change.
+        (root / "edited.wav").rename(root / "dialogue-premix.wav")
+        ctx.ref(value["sound_mix_job"], {"sound-mix"}, "music-on.wav" if value.get("music", False) else "music-off.wav", "edited.wav")
+        for name in ("soundtrack-receipt.json", "soundtrack-plan.json", "credits.json"):
+            ctx.ref(value["sound_mix_job"], {"sound-mix"}, name, name)
     big = dict(timeout=7200, cpu=28800, as_limit=6 * 1024**3, nofile=256, file_limit=8 * 1024**3, max_log=1024 * 1024, threads="2")
     helper("caption_layer")
     ctx.used["caption_layer"] = HELPERS["caption_layer"][1]
@@ -998,7 +1073,7 @@ def _final_render(ctx, value, source, metadata):
     ctx.write("final-integrity.json", integrity)
     face = json.loads((root / "face-audit.json").read_text())
     lap("summary")
-    return {"phase_seconds": phases,"assemble_job": value["assemble_job"], "crop_job": value["crop_job"], "width": verified["width"], "height": verified["height"],
+    return {"sound_mix_job": value.get("sound_mix_job"), "music": value.get("music", False), "phase_seconds": phases,"assemble_job": value["assemble_job"], "crop_job": value["crop_job"], "width": verified["width"], "height": verified["height"],
             "frames": verified["frames"], "fps": verified["fps"], "duration_s": round(verified["audio_duration"], 3),
             "final_sha256": verified["sha256"], "final_bytes": (root / "final.mp4").stat().st_size,
             "captions": {"cues": live.get("caption_cues"), "words": len(words), "frames_with_cue": live["cue_on_frames"],
@@ -1226,8 +1301,16 @@ def _delivery_gate(ctx, value, source, metadata):
                       ("final_acoustic_scan", "final-acoustic-scan.json"), ("final_integrity", "final-integrity.json")]:
         receipt[key] = {"path": name, "sha256": sha(root / name)}
     ctx.write("audio-gate.json", receipt)
+    render, _ = ctx.lookup(rj, {"final-render"})
+    sound_check = None
+    if render["plan"]["input"].get("sound_mix_job"):
+        for name in ("soundtrack-receipt.json", "soundtrack-plan.json", "credits.json", "dialogue-premix.wav", "edited.wav"):
+            # Keep the speech-only gate's edited.wav intact.
+            ctx.ref(rj, {"final-render"}, name, "mix-input.wav" if name == "edited.wav" else name)
+        sound_check = __import__("soundtrack").delivery_check(root)
+        ctx.write("sound-delivery.json", sound_check)
     code, out, err = ctx.run("audio_gate", [root, "--stage", "delivery"], timeout=120, check=False, as_limit=2 * 1024**3)
-    result = {"pass": code == 0, "exit_code": code, "stage": "delivery", "output": json.loads(out) if code == 0 else None,
+    result = {"pass": code == 0 and (sound_check is None or sound_check["pass"]), "soundtrack": sound_check, "exit_code": code, "stage": "delivery", "output": json.loads(out) if code == 0 else None,
               "error": None if code == 0 else _tail(err), "receipt_sha256": sha(root / "audio-gate.json"),
               "words_lost_vs_edited": lost, "words_added_vs_edited": added, "words_lost_located": wr["lost_located"],
               "lost_words_fail": wr["fail"], "lost_words_reason": wr["reason"], "asr_variance": wr["asr_variance"],
@@ -1242,6 +1325,7 @@ def _delivery_gate(ctx, value, source, metadata):
 
 
 STAGE_RUNNERS = {
+    "sound-mix": __import__("soundtrack").mix,
     "source-audio": _source_audio, "resolve-preset": _resolve_preset, "preflight": _preflight, "asr": _asr,
     "align": _align, "acoustic-ctc": _ctc, "pcm-assemble": _pcm_assemble, "speech-cut-audit": _speech_cut_audit,
     "acoustic-scan": _acoustic_scan, "dialogue-gate": _dialogue_gate, "validate-project": _validate_project,

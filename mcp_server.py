@@ -739,6 +739,14 @@ def do_render_final(run: dict) -> dict:
     else:
         crop = stage(run, "face-crop", crop_body(jobs, run["params"].get("framing")), wait_s=1900)
         body = {"assemble_job": jobs["pcm_assemble"], "crop_job": crop["id"], "edited_asr_job": jobs["edited_asr"]}
+    sound = run["params"].get("sound") or {}
+    if sound.get("base_render_job"):
+        base_render = api("GET", f"/v1/jobs/{sound['base_render_job']}")
+        body = dict(base_render["plan"]["input"])
+        if base_render["project"] != run["project"] or body["assemble_job"] != jobs["pcm_assemble"]:
+            raise ToolError("base render must belong to the same project and locked cuts")
+        crop = api("GET", f"/v1/jobs/{body['crop_job']}")
+    body.update(sound)
     render = stage(run, "final-render", body, wait_s=14500)
     lang = run["params"]["language"]
     fasr = stage(run, "asr", {"audio_job": render["id"], "language": lang})
@@ -869,8 +877,39 @@ def _result(fn, *a, **kw):
     "if requires_owner_confirmation, show the owner its warning and wait for a yes before importing), the default edit (approved cuts "
     "+ motion graphics + captions + crop), the exact tool order (one combined cut + motion-plan approval, then apply_cuts, submit_motion, "
     "capture_motion smoke/proof, render_final({'motion': true})), James DeFleur's motion_contract, limits and what is not automated."))
-def workflow_guide(ctx: Context, agent_harness: str | None = None, agent_model: str | None = None) -> dict:
-    return {"agent_check": agent_check(agent_harness, agent_model, client_from(ctx)), **GUIDE}
+def workflow_guide(ctx: Context, agent_harness: str | None = None, agent_model: str | None = None, profile_id: str = "original-v1") -> dict:
+    return {"agent_check": agent_check(agent_harness, agent_model, client_from(ctx)), **GUIDE,
+            "workflow_profile": api("GET", "/v1/workflows/" + urllib.parse.quote(profile_id, safe=""))}
+
+
+@mcp.tool(description="List immutable workflow instruction profiles. Default remains original-v1; no model is selected by the app.")
+def list_workflows() -> dict:
+    return _result(lambda: api("GET", "/v1/workflows"))
+
+
+@mcp.tool(description="Pin a fresh project's workflow before its first stage. Record actual reported identity and prior approval references; not new approval.")
+def select_workflow(project_id: str, profile_id: str = "original-v1", provenance: dict | None = None) -> dict:
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/workflow", {"profile_id": profile_id, "provenance": provenance or {}}))
+
+
+@mcp.tool(description="Upload small licensed audio: base64, extension (.wav/.mp3/.flac/.ogg/.m4a), sha256, license_receipt {source_url,license,attribution,evidence}. Native HTTP permits 32MiB; keep MCP small. No external retrieval.")
+def upload_sound_asset(project_id: str, asset: dict) -> dict:
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/sound-assets", asset))
+
+
+@mcp.tool(description="Submit immutable version=1 soundtrack with cues [{asset_id,role:sfx|music,start,end,source_start,gain_db,fade_s}]. Edited seconds; gain relative to local dialogue. Returns plan_sha256.")
+def submit_soundtrack(project_id: str, plan: dict) -> dict:
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/soundtrack", plan))
+
+
+@mcp.tool(description="Queue native sound-mix against a completed pcm-assemble job. Produces speech+SFX and speech+SFX+music with receipts. Poll sound_job_status; then pass its job id as render_final options.sound_mix_job.")
+def mix_soundtrack(project_id: str, assemble_job: str, plan_sha256: str) -> dict:
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/stages/sound-mix", {"assemble_job": assemble_job, "plan_sha256": plan_sha256}))
+
+
+@mcp.tool(description="Read a native sound mix/stage job state and hash-bound artifacts. needs_review means computation complete, not approval.")
+def sound_job_status(job_id: str) -> dict:
+    return _result(lambda: api("GET", f"/v1/jobs/{job_id}"))
 
 
 @mcp.tool(description=(
@@ -1165,7 +1204,7 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex project id")
         opts = options or {}
-        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason"}:
+        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "sound_mix_job", "music", "base_render_job"}:
             raise ToolError("options may contain only 'motion' (bool), 'framing' (object) and 'plain_reason' (text)")
         cuts = runs_for(project_id, "apply_cuts", "done")
         if not cuts:
@@ -1183,7 +1222,7 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
                 raise ToolError("a run is already in progress for this project; call get_status(project_id)")
             run = start_run("render_final", project_id, {"cut": {"jobs": cut["result"]["jobs"], "run": cut["id"]},
                                                          "language": lang, "base_url": base_url(ctx), "proof": proof,
-                                                         "framing": opts.get("framing")}, do_render_final)
+                                                         "framing": opts.get("framing"), "sound": {k: opts[k] for k in ("sound_mix_job", "music", "base_render_job") if k in opts}}, do_render_final)
         out = {"run_id": run["id"], "state": "running", "from_apply_cuts_run": cut["id"], "motion": bool(proof),
                "next": f"Call get_status('{run['id']}') now and keep calling it until state is 'done' (each call waits up to ~55 s; "
                        "elapsed_s, sub_stage and estimate_remaining_s move while it works). "

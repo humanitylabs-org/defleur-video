@@ -6,6 +6,8 @@ from contextlib import contextmanager
 import hashlib
 import workflow
 import motion
+import profiles
+import soundtrack
 import errno
 import fcntl
 import hmac
@@ -802,6 +804,7 @@ class Store:
                 metadata.update(converted)
             metadata.update({"id": identifier, "upstream_commit": UPSTREAM, "created": time.time(), "missing_delivery_gates": GATES})
             metadata.update(extra or {})
+            metadata["workflow_profile"] = profiles.pin()
             dest = self.path(identifier)
             dest.mkdir(mode=0o700)
             tmp.rename(dest / "source.mp4")
@@ -915,7 +918,7 @@ class Store:
             if c.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0] >= 2:
                 raise Rejected("queue full")
             jid = uuid.uuid4().hex
-            plan = {"workflow_stage": stage, "input": value}
+            plan = {"workflow_stage": stage, "input": value, "workflow_profile": metadata.get("workflow_profile", profiles.pin())}
             c.execute("INSERT INTO jobs VALUES(?,?,'queued',?,NULL,NULL,?)", (jid, identifier, json_bytes(plan).decode(), time.time()))
         return self.job(jid)
 
@@ -1240,11 +1243,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(409, {"error": status["fix"] or "Files folder not writable", "media": status})
             return self.send(201, server.store.save_final(value["job"]))
         store = server.store
+        if method == "GET" and self.path == "/v1/workflows":
+            return self.send(200, profiles.listing())
+        if method == "GET" and len(parts) == 4 and parts[1:3] == ["v1", "workflows"]:
+            return self.send(200, profiles.get(parts[3]))
+        if len(parts) == 5 and parts[1:3] == ["v1", "projects"] and parts[4] in ("workflow", "sound-assets", "soundtrack"):
+            metadata = store.project(parts[3])
+            if method == "GET" and parts[4] == "workflow":
+                return self.send(200, metadata.get("workflow_profile", profiles.pin()))
+            if method == "POST":
+                value = parse_json(self.rfile.read(self.length(46 * 1024 * 1024 if parts[4] == "sound-assets" else MAX_STAGE_JSON)))
+                if parts[4] == "workflow":
+                    if not isinstance(value, dict) or set(value) - {"profile_id", "provenance"} or "profile_id" not in value:
+                        raise Rejected("workflow requires profile_id and optional provenance")
+                    pin = profiles.pin(value["profile_id"], value.get("provenance"))
+                    with store.connect() as c:
+                        c.execute("BEGIN IMMEDIATE")
+                        if c.execute("SELECT 1 FROM jobs WHERE project=?", (parts[3],)).fetchone():
+                            raise Rejected("workflow profile is immutable after first job; create a fresh project")
+                        metadata["workflow_profile"] = pin
+                        c.execute("UPDATE projects SET metadata=? WHERE id=?", (json_bytes(metadata).decode(), parts[3]))
+                    return self.send(200, pin)
+                if not metadata.get("workflow_profile", {}).get("soundtrack_enabled"):
+                    raise Rejected("sound assets require the enhanced workflow profile")
+                result = soundtrack.store_asset(store.path(parts[3]), value) if parts[4] == "sound-assets" else soundtrack.submit(store.path(parts[3]), value)
+                return self.send(201, result)
         if method == "GET" and self.path == "/v1/capabilities":
             return self.send(200, {"version": VERSION, "upstream_commit": UPSTREAM,
                 "operations": ["upload_mp4", "workflow_stages", "read_workflow_docs", "submit_edit_plan_preview", "persist_transcript_decisions", "burn_timed_captions", "fixed_protected_crop", "cut_edge_review_artifacts", "poll_job", "download_preview", "delete_project"],
                 "limits": {"upload_bytes": MAX_UPLOAD, "duration_s": MAX_DURATION, "output_duration_s": workflow.MAX_OUTPUT_S, "editing_resolution": "up to 1920x1080 (4K and other larger sources are normalized down on upload)", "motion_inline_json_bytes": MAX_MOTION_JSON, "motion_asset_bytes": {k: v for k, v in motion.MAX_ASSET.items()}, "projects": MAX_PROJECTS, "jobs": MAX_JOBS, "workers": 1, "decisions_per_project": 16, "json_bytes": MAX_STAGE_JSON, "preview_job_wall_seconds": 180},
-                "workflow": workflow.capabilities(), "media": media_status(),
+                "workflow": workflow.capabilities(), "profiles": profiles.listing(), "media": media_status(),
                 "ai_calls": False, "delivery_approval": False, "missing_delivery_gates": GATES})
         if method == "POST" and len(parts) == 6 and parts[1:3] == ["v1", "projects"] and parts[4] == "stages":
             if self.headers.get("Content-Type") != "application/json":
