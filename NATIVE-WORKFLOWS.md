@@ -84,3 +84,8 @@ the operator and retained; the app cannot establish legal title automatically.
 There is no automatic ducking: fixed dialogue-relative gain, fades and overlap
 limits are used. Silent/speech-free cue windows fail closed rather than guessing
 a level. Loudness/true-peak and subjective audibility still require review.
+## Native common-mechanics evidence
+
+`pcm-assemble` now emits `pcm-identity.json`: an independent direct comparison of every complete kept PCM block with the source at its mapped position, bound to source/edited/map hashes. `apply_cuts` preserves the lexical lost/added lists and original near-cut rejection. Only a usable aligned word wholly retained in a verified block can become `asr_variance_pcm_verified`; no word-pair whitelist, threshold reduction or listening approval is implied. Cut-overlap, acoustic and dialogue custody gates still apply. Truncated/crossing/unusable intervals or any mismatched PCM cannot use this route.
+
+Framing accepts `shot_boundaries: [{"source_frame": 452}, {"source_frame": 490}]`, meaning the first source frame of each independently observed camera shot, or exact frame-aligned `source_s` instead. These split only the VIDEO crop ledger at the first corresponding output frame. Audio, approved cuts and canonical edit map stay unchanged. Targets and `new_setup_at` keep their original kept-segment indexes. Both sides of each shot are sampled, with one fixed crop per setup and unchanged face margins. Supply the same framing to preview, capture and final render; shot boundaries are not permission for detector-driven panning.

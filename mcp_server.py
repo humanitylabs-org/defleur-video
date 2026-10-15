@@ -531,7 +531,8 @@ def do_apply_cuts(run: dict) -> dict:
     lang = edit["language"]
     asm = stage(run, "pcm-assemble", {"audio_job": edit["jobs"]["source_audio"], "segments": keeps})
     # Regions come from the assembled (sample-exact) segments, the same list the audio was built from.
-    blocks = artifact(asm["id"], "edit-map.json")["segments"]
+    assembled_map = artifact(asm["id"], "edit-map.json")
+    blocks = assembled_map["segments"]
     regions, removed, kept_words = cut_regions(words, blocks, duration, timed=True)
     audit = stage(run, "speech-cut-audit", {"assemble_job": asm["id"], "regions": regions[:2000]})
     cut_receipt = artifact(audit["id"], "cut-regression.json")
@@ -563,6 +564,17 @@ def do_apply_cuts(run: dict) -> dict:
         recovered = [r for r in lost_near if r.get("heard_on_local_recheck")]
         lost_near = [r for r in lost_near if not r.get("heard_on_local_recheck")]
         review_words.update(lost_near_cuts=lost_near, lost_near_cuts_heard_on_local_recheck=recovered, fail=bool(lost_near))
+    # This is an independent byte comparison made by this assembly, not an ASR
+    # whitelist or an assertion inferred from how assemble_pcm is meant to work.
+    from editing import resolve_pcm_variance
+    pcm_proof = artifact(asm["id"], "pcm-identity.json")
+    hashes = {a["name"]: a["sha256"] for a in asm["result"]["artifacts"]}
+    if (pcm_proof.get("source_audio_job") != edit["jobs"]["source_audio"] or
+        any(pcm_proof.get(k) != hashes.get(n) for k, n in
+            (("source_sha256", "source.wav"), ("edited_sha256", "edited.wav"), ("edit_map_sha256", "edit-map.json")))):
+        raise ToolError("PCM identity custody does not match this assembly")
+    review_words = resolve_pcm_variance(review_words, kept_words, assembled_map, pcm_proof)
+    lost_near = review_words["lost_near_cuts"]
     fillers_left = [w for w in got if w in FILLERS]
     sound = cut_sound_check(cuts, artifact(edit["jobs"]["source_audio"], "energy.json"), words)
 
@@ -607,6 +619,7 @@ def do_apply_cuts(run: dict) -> dict:
     dl = lambda j, n: f"{base}/v1/jobs/{j}/stage-artifacts/{n}"
     names = {a["name"] for a in asm["result"]["artifacts"]}
     downloads = {"edited_audio_wav": dl(asm["id"], "edited.wav"), "edit_map_json": dl(asm["id"], "edit-map.json"),
+                 "pcm_identity_json": dl(asm["id"], "pcm-identity.json"),
                  "cut_evidence_json": dl(audit["id"], "cut-regression.json"),
                  "dialogue_gate_result_json": dl(gate["id"], "dialogue-gate-result.json"),
                  "edited_transcript_json": dl(easr["id"], "asr.json")}
@@ -644,6 +657,9 @@ def do_apply_cuts(run: dict) -> dict:
         "words_removed_by_cuts": removed,
         "words_lost_vs_source": lost, "words_added_vs_source": added,
         "words_lost_near_cuts": lost_near,
+        "words_lost_near_cuts_original": review_words["lost_near_cuts_original"],
+        "asr_variance_pcm_verified": review_words["asr_variance_pcm_verified"],
+        "pcm_identity_pass": pcm_proof["pass"],
         "words_near_cuts_heard_on_local_recheck": review_words.get("lost_near_cuts_heard_on_local_recheck", []),
         "local_rechecks": rechecks,
         "asr_variance_far_from_cuts": review_words["asr_variance_far_from_cuts"],
@@ -656,8 +672,10 @@ def do_apply_cuts(run: dict) -> dict:
         "cut_audit_pass": bool(audit["result"]["summary"].get("pass")),
         "cut_audit_failures": failed_regions[:20],
         # The app's reported pass also requires no lost words; James' audio_gate.py itself checks evidence only.
-        "dialogue_gate": {"pass": bool(gsum["dialogue_gate_pass"]) and not review_words["fail"] and sound["pass"],
+        "dialogue_gate": {"pass": bool(gsum["dialogue_gate_pass"]) and not failed_regions and not review_words["fail"] and sound["pass"] and pcm_proof["pass"],
                           "reason": "; ".join(x for x in (
+                              (f"{len(review_words['asr_variance_pcm_verified'])} lexical discrepancy(s) classified as transcription variance by fresh complete-segment PCM identity; original lost words retained")
+                              if review_words["asr_variance_pcm_verified"] else "",
                               (f"{len(lost_near)} kept word(s) near a cut missing from the re-transcribed edit: "
                                + " ".join(f"{r['word']}@{r['source_start_s']:.2f}s" for r in lost_near[:20])) if lost_near else "",
                               (f"{len(review_words['asr_variance_far_from_cuts'])} word(s) missed by the second ASR pass far from "
@@ -1098,8 +1116,13 @@ def latest_proof(project_id: str, cut_run: str) -> dict:
 def check_framing(framing):
     if framing is None:
         return None
-    if not isinstance(framing, dict) or set(framing) - {"targets", "new_setup_at"}:
-        raise ToolError("framing must be {'targets': {'<kept segment index>': 'largest'|'left'|'right'|'center'}, 'new_setup_at': [index]}")
+    if not isinstance(framing, dict) or set(framing) - {"targets", "new_setup_at", "shot_boundaries"}:
+        raise ToolError("framing accepts targets, new_setup_at and shot_boundaries: [{source_frame: integer} or {source_s: frame-aligned seconds}]")
+    from face_audit import validate_shot_boundaries
+    try:
+        validate_shot_boundaries(framing.get("shot_boundaries", []))
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
     return framing
 
 
@@ -1108,7 +1131,10 @@ def check_framing(framing):
     "which person each kept segment frames in a two-person shot. framing (optional): {'targets': {'<kept segment index>': "
     "'largest'|'left'|'right'|'center'}, 'new_setup_at': [kept segment index]}; segments are numbered from 0 in the kept "
     "order (apply_cuts reports kept_segments). Each setup gets ONE fixed crop (no animated pans, per James' contract); a "
-    "change of target starts a new setup. Returns a run_id; call get_status until 'done', then look at each evidence_image."))
+    "change of target starts a new setup. For real camera cuts WITHIN a kept segment, add shot_boundaries: "
+    "[{'source_frame': 452}] (first source frame of new shot), or {'source_s': frame-aligned seconds}. "
+    "These split VIDEO crop ranges only; approved audio and edit map never change. "
+    "Returns a run_id; call get_status until 'done', then look at each evidence_image."))
 def preview_framing(project_id: str, ctx: Context, framing: dict | None = None) -> dict:
     def go():
         if not ID.fullmatch(project_id or ""):

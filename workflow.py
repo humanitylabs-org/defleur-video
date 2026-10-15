@@ -306,7 +306,7 @@ def _segments(rows, duration):
 
 
 def _framing(value, segments):
-    _obj(value, set(), {"targets", "new_setup_at"})
+    _obj(value, set(), {"targets", "new_setup_at", "shot_boundaries"})
     targets = value.get("targets", {})
     if not isinstance(targets, dict) or len(targets) > 400:
         raise Rejected("framing.targets must map kept-segment index -> largest|left|right|center")
@@ -316,6 +316,11 @@ def _framing(value, segments):
     breaks = value.get("new_setup_at", [])
     if not isinstance(breaks, list) or any(type(b) is not int or not 0 < b < segments for b in breaks):
         raise Rejected(f"framing.new_setup_at must list kept-segment indexes 1..{segments - 1}")
+    from face_audit import validate_shot_boundaries
+    try:
+        validate_shot_boundaries(value.get("shot_boundaries", []))
+    except ValueError as exc:
+        raise Rejected(str(exc)) from exc
 
 
 def _render_refs(value, lookup):
@@ -716,13 +721,19 @@ def _pcm_assemble(ctx, value, source, metadata):
     ctx.run("assemble_pcm", [ctx.root, "--fps", s["fps"], "--source-frames", str(s["frames"])],
             timeout=280, cpu=600, file_limit=1024 * 1024 * 1024, as_limit=4 * 1024**3)
     mapped = json.loads((ctx.root / "edit-map.json").read_text())
+    from editing import pcm_identity
+    identity = pcm_identity(ctx.root / "source.wav", ctx.root / "edited.wav", mapped)
+    identity.update(source_audio_job=value["audio_job"], edit_map_sha256=sha(ctx.root / "edit-map.json"))
+    ctx.write("pcm-identity.json", identity)
+    if not identity["pass"]:
+        raise Rejected("Independent PCM identity failed: " + "; ".join(identity["errors"]))
     with wave.open(str(ctx.root / "edited.wav")) as edited:
         if edited.getnframes() != mapped["samples"]:
             raise Rejected("Assembled PCM does not match sample ledger")
     blocks = [{"id": f"segment-{i}", "source_start_s": seg["start_s"], "source_end_s": seg["end_s"]} for i, seg in enumerate(mapped["segments"])]
     ctx.write("blocks.json", {"blocks": blocks, "derived_from": "edit-map.json segments (sample-exact)"})
     return {"audio_job": value["audio_job"], "duration_s": mapped["duration"], "frames": mapped["frames"], "fps": mapped["fps"],
-            "segments": len(mapped["segments"]),
+            "segments": len(mapped["segments"]), "pcm_identity_pass": identity["pass"],
             "removed_s": round(s["duration_s"] - mapped["duration"], 6)}
 
 

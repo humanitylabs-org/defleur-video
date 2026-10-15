@@ -108,6 +108,76 @@ def judge(box, crop, cap_frac):
     return inside, clear
 
 
+def validate_shot_boundaries(rows):
+    """Public schema: explicit first frame of a true camera shot, never a pan."""
+    import math
+    if not isinstance(rows, list) or len(rows) > 400:
+        raise ValueError('framing.shot_boundaries must be a list of at most 400 source-frame/time boundaries')
+    for row in rows:
+        if not isinstance(row, dict) or set(row) not in ({'source_frame'}, {'source_s'}):
+            raise ValueError('shot boundary needs exactly source_frame or source_s')
+        if 'source_frame' in row:
+            if type(row['source_frame']) is not int or row['source_frame'] < 0:
+                raise ValueError('source_frame must be a nonnegative integer')
+        elif type(row['source_s']) not in (int, float) or not math.isfinite(row['source_s']) or row['source_s'] < 0:
+            raise ValueError('source_s must be finite nonnegative frame-aligned seconds')
+
+
+def visual_ranges(edit, framing):
+    """Partition VIDEO only, using the canonical map's actual source frame IDs.
+
+    A shot change takes effect at the first output frame of that source shot,
+    not at rounded audio time. Keep original segment indexes for speaker targets
+    and new_setup_at; do not mutate a single PCM/map field.
+    """
+    rows = framing.get('shot_boundaries', [])
+    validate_shot_boundaries(rows)
+    fps = Fraction(edit['fps'])
+    boundaries = []
+    for row in rows:
+        if 'source_frame' in row:
+            f = row['source_frame']
+        else:
+            exact = row['source_s'] * float(fps)
+            f = round(exact)
+            if abs(exact - f) > 1e-6:
+                raise ValueError('source_s must name an exact source frame boundary')
+        if boundaries and f <= boundaries[-1]:
+            raise ValueError('shot boundaries must be unique and source-ordered')
+        boundaries.append(f)
+    indices = edit['source_frame_indices']
+    if len(indices) != edit['frames'] or any(b < a for a,b in zip(indices, indices[1:])):
+        raise ValueError('source frame map must be complete and monotonic')
+    targets = {int(k): v for k,v in framing.get('targets', {}).items()}
+    breaks = set(framing.get('new_setup_at', []))
+    output, used = [], set()
+    for k, s in enumerate(edit['segments']):
+        emitted = [(f, sf) for f, sf in enumerate(indices) if s['output_start'] <= f / float(fps) < s['output_end']]
+        if not emitted:
+            raise ValueError('kept segment has no output picture frame')
+        cuts = []
+        for boundary in boundaries:
+            if emitted[0][1] < boundary <= emitted[-1][1]:
+                at = next(i for i, (_, sf) in enumerate(emitted) if sf >= boundary)
+                cuts.append(at); used.add(boundary)
+        points = [0] + cuts + [len(emitted)]
+        for j, (lo, hi) in enumerate(zip(points, points[1:])):
+            subset = emitted[lo:hi]
+            start = s['output_start'] if lo == 0 else subset[0][0] / float(fps)
+            end = s['output_end'] if hi == len(emitted) else emitted[hi][0] / float(fps)
+            output.append({**s, 'segment': k, 'output_start': start, 'output_end': end,
+                           'start_s': s['start_s'] if lo == 0 else subset[0][1] / float(fps),
+                           'end_s': s['end_s'] if hi == len(emitted) else emitted[hi][1] / float(fps),
+                           'source_frames': sorted(set(sf for _, sf in subset)),
+                           'target': targets.get(k, 'largest'), 'force_setup': j > 0 or k in breaks})
+    if used != set(boundaries):
+        raise ValueError('shot boundary must split emitted picture frames inside a kept segment; use new_setup_at at segment starts')
+    if not output or output[0]['output_start'] != 0 or output[-1]['output_end'] != edit['duration'] or any(
+        a['output_end'] != b['output_start'] for a,b in zip(output, output[1:])):
+        raise ValueError('video crop ranges must cover the exact edit without gaps or overlaps')
+    return output
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("source", type=Path)
@@ -119,36 +189,38 @@ def main() -> None:
     ap.add_argument("--framing", type=Path, help="optional JSON {targets: {segment: largest|left|right|center}, new_setup_at: [segment]}")
     a = ap.parse_args()
     framing = json.loads(a.framing.read_text()) if a.framing else {}
-    targets = {int(k): v for k, v in (framing.get("targets") or {}).items()}
-    breaks = set(int(k) for k in framing.get("new_setup_at") or [])
+
     import cv2
     cw_out, ch_out = (int(v) for v in a.canvas.split("x"))
     aspect, cap_frac = cw_out / ch_out, a.caption_top / ch_out
     edit = json.loads(a.edit_map.read_text())
     info = probe(a.source)
     W, H, fps = info["width"], info["height"], Fraction(edit["fps"])
-    segments = edit["segments"]
+    segments = visual_ranges(edit, framing)
+    targets = {k: s["target"] for k, s in enumerate(segments)}
+    breaks = {k for k, s in enumerate(segments) if s["force_setup"]}
     total = sum(s["end_s"] - s["start_s"] for s in segments)
     step = max(0.5, total / MAX_SAMPLES)
     samples = []  # (segment, source frame)
     for k, s in enumerate(segments):
-        t, frames = s["start_s"] + 0.04, set()
-        while t < s["end_s"] - 0.02:
-            frames.add(int(t * fps)); t += step
-        frames.add(max(int(s["start_s"] * fps), int((s["end_s"] - 0.04) * fps)))
+        actual = s["source_frames"]
+        frames = set(actual[::max(1, int(step * fps))])
+        # Always audit both sides of every explicit shot boundary, including
+        # very short shots. Never sample a neighbouring shot's source frame.
+        frames.update((actual[0], actual[-1]))
         samples += [(k, f) for f in sorted(frames)]
     wanted = sorted({f for _, f in samples})
-    scale = W / DETECT_WIDTH
+    detection_scale = W / DETECT_WIDTH
     detector = None
     found, thumbs = {}, {}
     for index, img in decode_frames(a.source, wanted, W, H, DETECT_WIDTH):
         if detector is None:
             detector = cv2.FaceDetectorYN.create(str(a.model), "", (img.shape[1], img.shape[0]), SCORE)
         _, faces = detector.detect(img)
-        rows = [] if faces is None else sorted(([float(v) * scale for v in f[:4]] + [float(f[14])] for f in faces),
+        rows = [] if faces is None else sorted(([float(v) * detection_scale for v in f[:4]] + [float(f[14])] for f in faces),
                                                key=lambda r: -r[2] * r[3])
         found[index] = rows
-        if len(thumbs) < 64:
+        if len(thumbs) < 64 or any(index == s["source_frames"][0] for s in segments):
             thumbs[index] = img
     if len(found) != len(wanted):
         raise SystemExit(f"sampled {len(found)} of {len(wanted)} frames")
@@ -185,12 +257,12 @@ def main() -> None:
         boxes = [b for j in members for b in seg_boxes[j]]
         crop, zoom, feasible = plan_crop(boxes, W, H, aspect, cap_frac)
         rows, bad, edge, band, depth = [], 0, 0, 0, []
-        scale = ch_out / crop[3]
+        output_scale = ch_out / crop[3]
         for k, f in samples:
             if k not in members:
                 continue
             faces = face(k, f)
-            row = {"segment": k, "target": targets.get(k, "largest"), "source_frame": f, "source_s": round(f / float(fps), 3), "faces": len(faces)}
+            row = {"segment": segments[k]["segment"], "visual_range": k, "target": targets.get(k, "largest"), "source_frame": f, "source_s": round(f / float(fps), 3), "faces": len(faces)}
             if faces:
                 inside, clear = judge(faces[0][:4], crop, cap_frac)
                 row.update({"box": [round(v, 1) for v in faces[0][:4]], "score": round(faces[0][4], 3), "inside_crop_with_margin": inside,
@@ -201,7 +273,7 @@ def main() -> None:
                     band += 1
                     x0, y0, w0, h0 = faces[0][:4]
                     # output px the face box (+margin) reaches below the caption top: the chin/neck region under captions
-                    depth.append((y0 + h0 + MARGIN * h0 - (crop[1] + crop[3] * cap_frac)) * scale)
+                    depth.append((y0 + h0 + MARGIN * h0 - (crop[1] + crop[3] * cap_frac)) * output_scale)
             rows.append(row)
         detected = sum(1 for r in rows if r["faces"])
         flags = []
@@ -219,7 +291,8 @@ def main() -> None:
         if zoom < 1.0:
             flags.append(f"crop zoomed to {zoom:.2f} of full height to keep the face above the captions")
         passed = bool(detected) and not bad and feasible
-        audit = {"setup": f"setup-{sid}", "segments": members, "crop": crop, "zoom": zoom, "samples": rows, "detected": detected,
+        member_segments = sorted({segments[k]["segment"] for k in members})
+        audit = {"setup": f"setup-{sid}", "segments": member_segments, "visual_ranges": members, "crop": crop, "zoom": zoom, "samples": rows, "detected": detected,
                  "violations": bad, "near_crop_edge": edge, "into_caption_band": band,
                  "caption_band_overlap_px": {"median": round(sorted(depth)[len(depth) // 2]), "max": round(max(depth))} if depth else None,
                  "pass": passed, "flags": flags, "margin_fraction": MARGIN, "caption_band_top_fraction": round(cap_frac, 4),
@@ -228,13 +301,14 @@ def main() -> None:
         for k in members:
             s = segments[k]
             ledger["ranges"].append({"start": s["output_start"], "end": s["output_end"], "setup": f"setup-{sid}", "crop": crop,
+                                     "segment": s["segment"], "source_first_frame": s["source_frames"][0], "source_last_frame": s["source_frames"][-1],
                                      "source_start_s": s["start_s"], "source_end_s": s["end_s"], "face_audit": f"face-audit-setup-{sid}.json",
                                      "target": targets.get(k, "largest")})
         # Evidence image: a representative sampled frame with crop (green), faces (red) and caption band (yellow).
         pick = next((f for k, f in samples if k in members and f in thumbs), None)
         if pick is not None:
             img = thumbs[pick].copy()
-            s_ = 1 / scale
+            s_ = 1 / detection_scale
             x, y, w, h = crop
             cv2.rectangle(img, (int(x * s_), int(y * s_)), (int((x + w) * s_), int((y + h) * s_)), (0, 255, 0), 3)
             band = int((y + h * cap_frac) * s_)
@@ -242,7 +316,7 @@ def main() -> None:
             for fx, fy, fw, fh, _ in found[pick]:
                 cv2.rectangle(img, (int(fx * s_), int(fy * s_)), (int((fx + fw) * s_), int((fy + fh) * s_)), (0, 0, 255), 2)
             cv2.imwrite(str(a.out / f"setup-{sid}-crop.png"), img)
-        summary["setups"].append({"setup": f"setup-{sid}", "segments": members, "crop": crop, "zoom": zoom, "samples": len(rows),
+        summary["setups"].append({"setup": f"setup-{sid}", "segments": member_segments, "visual_ranges": members, "crop": crop, "zoom": zoom, "samples": len(rows),
                                   "detected": detected, "violations": bad, "near_crop_edge": edge, "into_caption_band": band,
                  "caption_band_overlap_px": {"median": round(sorted(depth)[len(depth) // 2]), "max": round(max(depth))} if depth else None,
                  "pass": passed, "flags": flags})

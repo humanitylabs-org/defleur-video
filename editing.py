@@ -629,6 +629,111 @@ def edit_word_review(kept, got, blocks, duration, words):
                       "missing it is ASR variance; it is listed under asr_variance_far_from_cuts and does not fail the gate.")}
 
 
+def pcm_identity(source, edited, mapped):
+    """Independently compare complete PCM blocks, not the assembler's assertion.
+
+    Caller must acquire source via hash-verified native artifact custody. No ASR
+    token similarity, energy threshold, or owner approval enters this proof.
+    """
+    import hashlib
+    import json
+    import math
+    import wave
+    from pathlib import Path
+    digest = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
+    proof = {"version": 1, "pass": False, "segments": [], "errors": [],
+             "source_sha256": digest(source), "edited_sha256": digest(edited),
+             "map_content_sha256": hashlib.sha256(json.dumps(mapped, sort_keys=True, allow_nan=False).encode()).hexdigest(),
+             "scope": "Exact full-block PCM identity and sample mapping; not alignment accuracy or human listening."}
+    try:
+        with wave.open(str(source)) as src, wave.open(str(edited)) as dst:
+            fmt = lambda w: (w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getcomptype())
+            rate, channels, width, codec = fmt(src)
+            if fmt(src) != fmt(dst) or width != 2 or codec != 'NONE':
+                raise ValueError('source/edited must have matching PCM s16 rate and channels')
+            if (mapped['sample_rate'], mapped['channels'], mapped['samples']) != (rate, channels, dst.getnframes()):
+                raise ValueError('map rate/channels/sample count differs from WAV')
+            if mapped['duration'] != mapped['samples'] / rate or not mapped['segments']:
+                raise ValueError('map duration/segments invalid')
+            proof.update(sample_rate=rate, channels=channels, sample_width=width, samples=dst.getnframes())
+            cursor, previous = 0, 0
+            for i, b in enumerate(mapped['segments']):
+                a, z, oa, oz = (b[k] for k in ('start_sample', 'end_sample', 'output_start_sample', 'output_end_sample'))
+                if any(type(x) is not int for x in (a, z, oa, oz)) or not previous <= a < z <= src.getnframes():
+                    raise ValueError('invalid/overlapping source sample mapping')
+                if oa != cursor or oz - oa != z - a or oz > dst.getnframes():
+                    raise ValueError('output sample mapping is not exact and contiguous')
+                if any(not math.isfinite(b[k]) or b[k] != v / rate for k, v in
+                       (('start_s', a), ('end_s', z), ('output_start', oa), ('output_end', oz))):
+                    raise ValueError('time fields do not match sample mapping')
+                src.setpos(a); dst.setpos(oa)
+                sh, dh, identical, left = hashlib.sha256(), hashlib.sha256(), True, z - a
+                while left:
+                    n = min(left, 65536)
+                    sb, db = src.readframes(n), dst.readframes(n)
+                    if len(sb) != n * channels * width or len(db) != n * channels * width:
+                        raise ValueError('truncated PCM data')
+                    sh.update(sb); dh.update(db); identical = identical and sb == db
+                    left -= n
+                proof['segments'].append({"segment": i, "start_sample": a, "end_sample": z,
+                    "output_start_sample": oa, "output_end_sample": oz, "samples": z-a,
+                    "source_pcm_sha256": sh.hexdigest(), "edited_pcm_sha256": dh.hexdigest(), "pass": identical})
+                if not identical:
+                    proof['errors'].append(f'segment {i} PCM differs')
+                cursor, previous = oz, z
+            if cursor != dst.getnframes():
+                raise ValueError('uncovered edited PCM')
+    except (ValueError, KeyError, TypeError, wave.Error, EOFError) as exc:
+        proof['errors'].append(str(exc))
+    proof['pass'] = not proof['errors']
+    return proof
+
+
+def resolve_pcm_variance(review, kept, mapped, proof):
+    """Resolve only usable, completely contained lost-word intervals with native PCM proof.
+
+    Preserve the original rejection and lexical diff. Cut-overlap/acoustic gates
+    still run independently. The proof is generated afresh by pcm-assemble and
+    hash-bound to its source, edited WAV, and exact map by the native workflow.
+    """
+    import hashlib
+    import json
+    import math
+    near = review['lost_near_cuts']
+    out = {**review, 'lost_near_cuts_original': list(near), 'asr_variance_pcm_verified': []}
+    map_hash = hashlib.sha256(json.dumps(mapped, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    if not proof.get('pass') or proof.get('map_content_sha256') != map_hash:
+        return out
+    by_index = {w['index']: w for w in kept}
+    remaining = []
+    rate = mapped['sample_rate']
+    for row in near:
+        w = by_index.get(row['source_index'])
+        evidence = None
+        if w and row.get('timing') == 'aligned':
+            lo, hi = float(w['start']), float(w['end'])
+            if math.isfinite(lo) and math.isfinite(hi) and hi - lo >= USABLE_WORD_S:
+                # Enclose the entire aligned word; never round a crossing word inward.
+                a, z = math.floor(lo * rate), math.ceil(hi * rate)
+                for b in proof['segments']:
+                    if b['pass'] and b['start_sample'] <= a < z <= b['end_sample']:
+                        evidence = {**b, 'word_source_start_sample': a, 'word_source_end_sample': z,
+                                    'word_output_start_sample': b['output_start_sample'] + a - b['start_sample'],
+                                    'word_output_end_sample': b['output_start_sample'] + z - b['start_sample'],
+                                    'word_samples': z-a}
+                        break
+        if evidence:
+            out['asr_variance_pcm_verified'].append({**row, 'classification': 'transcription variance; complete PCM retained',
+                                                    'pcm_evidence': evidence})
+        else:
+            remaining.append(row)
+    out.update(lost_near_cuts=remaining, fail=bool(remaining))
+    out['basis'] += (' Near-cut lexical discrepancies may additionally be classified as transcription variance only with '
+                     'fresh, hash-bound direct full-segment PCM comparison and a usable aligned word wholly enclosed '
+                     'in that exact sample mapping. Original lost-word reports remain; cut overlap and acoustic guards still apply.')
+    return out
+
+
 RECHECK_PAD_S = 4.0      # local re-check window: this much edited audio on each side of a near-cut lost word
 RECHECK_MAX_WINDOWS = 8
 
@@ -680,6 +785,8 @@ def recheck_result(window, kept, blocks, got_tokens, lost_near):
     for k in kept:
         if float(k["end"]) - float(k["start"]) < USABLE_WORD_S or not _norm(k["word"]):
             continue
+        if not any(float(x["start_s"]) <= float(k["start"]) < float(k["end"]) <= float(x["end_s"]) for x in blocks):
+            continue  # hearing a token cannot recover audio truncated by a cut
         s, e = source_to_edited(float(k["start"]), blocks), source_to_edited(float(k["end"]), blocks)
         if s is not None and e is not None and a <= s and e <= b:
             exp.append(k)
