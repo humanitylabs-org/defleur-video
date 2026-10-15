@@ -933,6 +933,8 @@ def _sound_variant(ctx, value, source, metadata):
     decoded = json.loads(prior.read_text())
     if picture_hash != decoded["video_framemd5_sha256"] or len(hashes) != decoded["video_frames_decoded"]:
         raise Rejected("sound variant changed decoded picture frames")
+    if verified['full_decode_pass'] is not True or len(hashes) != verified['frames']:
+        raise Rejected("sound variant failed full decode")
     with wave.open(str(root / "final-audio.wav")) as w:
         samples = w.getnframes()
     ctx.write("decoded-final.json", {"final_sha256": sha(root / "final.mp4"), "audio_pcm": "final-audio.wav",
