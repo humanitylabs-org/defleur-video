@@ -24,13 +24,13 @@ class NativeSoundTests(unittest.TestCase):
             source, tone = root / "fixture.mp4", root / "tone.wav"
             subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=navy:s=160x90:r=10", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "3", "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-ac", "2", "-movflags", "+faststart", str(source)], check=True)
             subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=900:sample_rate=48000", "-t", "3", str(tone)], check=True)
-            server = service.make_server(root / "data", "fixture-token", port=0)
+            server = service.make_server(root / "data", "fixture-token-012345678901234567890123456789", port=0)
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
             def request(method, path, body=None, raw=False):
                 data = body if raw else json.dumps(body).encode() if body is not None else None
                 req = urllib.request.Request(f"http://127.0.0.1:{server.server_port}" + path, data=data, method=method,
-                    headers={"Authorization": "Bearer fixture-token", "Content-Type": "video/mp4" if raw else "application/json"})
+                    headers={"Authorization": "Bearer fixture-token-012345678901234567890123456789", "Content-Type": "video/mp4" if raw else "application/json"})
                 with urllib.request.urlopen(req, timeout=60) as r:
                     return json.load(r)
             def wait(job):

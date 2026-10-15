@@ -385,6 +385,7 @@ def stage(run: dict, op: str, body: dict, wait_s: float = 2400) -> dict:
     run["progress"] = None
     run["steps"].append({"stage": op, "job": job["id"], "state": job["state"],
                          "elapsed_s": (job.get("result") or {}).get("elapsed_s")})
+    run["workflow_profile"] = job.get("plan", {}).get("workflow_profile")
     save(run)
     if job["state"] != "needs_review":
         raise ToolError(f"{op} job {job['id']} failed: {job.get('error')}")
@@ -770,6 +771,8 @@ def do_render_final(run: dict) -> dict:
                  "face_audit_json": dl(crop["id"], "face-audit.json"), "final_integrity_json": dl(render["id"], "final-integrity.json"),
                  "media_verification_json": dl(render["id"], "media-verification.json"),
                  "pixel_check_json": dl(render["id"], "motion-check.json" if proof else "live-check.json")}
+    if body.get("sound_mix_job"):
+        downloads.update({"credits_json": dl(render["id"], "credits.json"), "soundtrack_receipt_json": dl(render["id"], "soundtrack-receipt.json")})
     if not proof:
         downloads["frame_sample_png"] = dl(render["id"], "final-frame-sample.png")
     downloads.update({f"crop_evidence_{s['setup']}_png": dl(crop["id"], f"{s['setup']}-crop.png") for s in cs["setups"]})
@@ -1205,7 +1208,7 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
             raise ToolError("project_id must be the 32-hex project id")
         opts = options or {}
         if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "sound_mix_job", "music", "base_render_job"}:
-            raise ToolError("options may contain only 'motion' (bool), 'framing' (object) and 'plain_reason' (text)")
+            raise ToolError("options: motion, framing, plain_reason, sound_mix_job, music (bool), base_render_job")
         cuts = runs_for(project_id, "apply_cuts", "done")
         if not cuts:
             raise ToolError("run apply_cuts for this project first and wait for it to finish (get_status)")
@@ -1244,7 +1247,7 @@ RENDER_PLAN = ["face-crop", "final-render", "asr", "acoustic-scan", "delivery-ga
 def public_run(r: dict, now: float | None = None) -> dict:
     """Run status with LIVE timings: elapsed is computed at read time, not when the run file was last saved."""
     now = time.time() if now is None else now
-    out = {k: r.get(k) for k in ("id", "kind", "project", "state", "step", "error")}
+    out = {k: r.get(k) for k in ("id", "kind", "project", "state", "step", "error", "workflow_profile")}
     running = r["state"] == "running"
     out["elapsed_s"] = round((now if running else (r.get("updated") or now)) - r["created"], 1)
     out["stages_done"] = [s["stage"] for s in r.get("steps", [])]

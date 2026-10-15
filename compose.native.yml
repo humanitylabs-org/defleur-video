@@ -1,0 +1,52 @@
+# Private candidate only. DATA_ROOT must be an external work disk, not a home directory.
+services:
+  video:
+    image: ${VIDEO_IMAGE:?set pushed-commit candidate image}
+    init: true
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 10g
+    cpus: 4
+    pids_limit: 2048
+    ports: ["127.0.0.1:${VIDEO_PORT:-28787}:8787"]
+    environment:
+      VIDEO_API_TOKEN: ${VIDEO_API_TOKEN:?set private candidate token}
+      VIDEO_VERSION: ${VIDEO_REVISION:?set pushed commit}
+      VIDEO_PUBLIC_URL: ${VIDEO_PUBLIC_URL:-}
+      TRANSCRIBER_URL: http://transcriber:8000
+      TRANSCRIBER_MODEL: Systran/faster-whisper-small
+      BROWSER_URL: http://browser:9222
+      TMPDIR: /data/tmp
+    volumes:
+      - ${DATA_ROOT:?external data root}/video:/data
+    depends_on: [browser, transcriber]
+  browser:
+    image: chromedp/headless-shell:155.0.8059.40@sha256:0dc9356ce1428962cddcf938dab712a8c56de79adc326f9138298f13df440071
+    init: true
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    shm_size: 1g
+    mem_limit: 3g
+    pids_limit: 2048
+    tmpfs: ["/tmp:rw,nosuid,size=1g"]
+    environment:
+      HOME: /tmp
+  transcriber:
+    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu@sha256:2163775b6df5e451a71200e8f675fed68dbd8ab184fc604453d549e486f22fd2
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 4g
+    cpus: 3
+    tmpfs: ["/tmp:rw,nosuid,size=256m"]
+    environment:
+      LOG_LEVEL: info
+      ENABLE_UI: "false"
+      WHISPER__COMPUTE_TYPE: int8
+      PRELOAD_MODELS: '["Systran/faster-whisper-small"]'
+    volumes:
+      - ${DATA_ROOT:?external data root}/huggingface:/home/ubuntu/.cache/huggingface
