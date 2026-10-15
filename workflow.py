@@ -896,6 +896,13 @@ def _locked_words(asr_words, duration):
     return words, adjusted
 
 
+def _sound_mix(ctx, value, source, metadata):
+    wav, _ = ctx.ref(value["assemble_job"], {"pcm-assemble"}, "edited.wav")
+    ctx.write("sound-mix-input.json", value)
+    return json.loads(ctx.app("soundtrack.py", ["mix", source.parent, wav, ctx.root, ctx.root / "sound-mix-input.json"],
+                              timeout=850, cpu=1700, as_limit=4 * 1024**3, file_limit=1024**3, max_log=1024**2))
+
+
 def _sound_variant(ctx, value, source, metadata):
     """Native alternate AAC encode from the exact already-verified picture stream."""
     base_id = value["base_render_job"]
@@ -1307,7 +1314,7 @@ def _delivery_gate(ctx, value, source, metadata):
         for name in ("soundtrack-receipt.json", "soundtrack-plan.json", "credits.json", "dialogue-premix.wav", "edited.wav"):
             # Keep the speech-only gate's edited.wav intact.
             ctx.ref(rj, {"final-render"}, name, "mix-input.wav" if name == "edited.wav" else name)
-        sound_check = __import__("soundtrack").delivery_check(root)
+        sound_check = json.loads(ctx.app("soundtrack.py", ["check", root], timeout=120, cpu=240, as_limit=4 * 1024**3))
         ctx.write("sound-delivery.json", sound_check)
     code, out, err = ctx.run("audio_gate", [root, "--stage", "delivery"], timeout=120, check=False, as_limit=2 * 1024**3)
     result = {"pass": code == 0 and (sound_check is None or sound_check["pass"]), "soundtrack": sound_check, "exit_code": code, "stage": "delivery", "output": json.loads(out) if code == 0 else None,
@@ -1325,7 +1332,7 @@ def _delivery_gate(ctx, value, source, metadata):
 
 
 STAGE_RUNNERS = {
-    "sound-mix": __import__("soundtrack").mix,
+    "sound-mix": _sound_mix,
     "source-audio": _source_audio, "resolve-preset": _resolve_preset, "preflight": _preflight, "asr": _asr,
     "align": _align, "acoustic-ctc": _ctc, "pcm-assemble": _pcm_assemble, "speech-cut-audit": _speech_cut_audit,
     "acoustic-scan": _acoustic_scan, "dialogue-gate": _dialogue_gate, "validate-project": _validate_project,

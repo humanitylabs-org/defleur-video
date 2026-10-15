@@ -15,8 +15,9 @@ operator's authenticated forwarding origin if download links need that origin.
 Do not reuse production data or disturb other containers. Bring up only this
 Compose project, and retain its data for resumable jobs.
 
-The app now runs in its existing pinned virtualenv because native sound analysis
-uses its existing NumPy dependency. No new model or unpinned dependency was added.
+The service keeps its original system interpreter. Native sound analysis runs
+as an isolated helper in the existing pinned virtualenv using its existing NumPy
+dependency. No new model or unpinned dependency was added.
 
 Verify `/healthz`, authenticated `/v1/capabilities`, then MCP initialize and
 `capabilities`. Require Transcriber reachable/model installed, Browser reachable,
@@ -69,7 +70,7 @@ and motion_ready. A successful health response alone is not workflow readiness.
 
 `test_native_sound.py` runs real HTTP upload, profile freeze, receipt/hash/timing
 rejections, original PCM assembly, licensed synthetic sound mix, AAC encode and
-decoded custody check. Run with the image's virtualenv Python, not system Python.
+decoded custody check. Run the suite with the image's original system Python.
 `NATIVE_SOUND_EVIDENCE` can save its actual JSON report. The fixture is generated
 owned sine waves; it does **not** prove speech ASR or human listening quality.
 Run the existing `test_service.py` regression suite too. Full Browser capture,

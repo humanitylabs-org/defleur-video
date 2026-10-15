@@ -11,6 +11,11 @@ import re
 import wave
 from pathlib import Path
 from urllib.parse import urlsplit
+import sys
+# Native helper runs with -I; only this immutable application source directory
+# may be imported, never a project or caller-supplied directory.
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 from editing import Rejected
 
 MAX_BYTES = 32 * 1024 * 1024
@@ -226,3 +231,26 @@ def mix(ctx, value, source, metadata):
     ctx.write("soundtrack-receipt.json", receipt)
     ctx.write("credits.json", {"assets": list(credits.values()), "embedded_in_video": False, "plan_sha256": value["plan_sha256"]})
     return receipt
+
+
+if __name__ == "__main__":
+    if sys.argv[1] == "check":
+        print(json.dumps(delivery_check(Path(sys.argv[2]))))
+    elif sys.argv[1] == "mix":
+        import shutil
+        from service import native
+        project, dialogue, output, request = map(Path, sys.argv[2:])
+        class NativeMixContext:
+            root = output
+            def ref(self, jid, stages, name, dest=None):
+                if name != "edited.wav" or stages != {"pcm-assemble"}:
+                    raise Rejected("unexpected sound helper input")
+                target = output / (dest or name)
+                shutil.copyfile(dialogue, target)
+                return target, {}
+            def write(self, name, value):
+                (output / name).write_bytes(canonical(value))
+            native = staticmethod(native)
+        print(json.dumps(mix(NativeMixContext(), json.loads(request.read_text()), project / "source.mp4", {})))
+    else:
+        raise SystemExit("unknown native sound helper operation")

@@ -53,5 +53,5 @@ RUN /opt/venv/bin/python -I /opt/defleur/skills/defleur-audio/scripts/test_audio
 USER 1000:1000
 EXPOSE 8787
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["/opt/venv/bin/python", "/app/service.py"]
+CMD ["/usr/bin/python3", "/app/service.py"]
 HEALTHCHECK --interval=30s --timeout=5s CMD ["/usr/bin/python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=3).read()"]

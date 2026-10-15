@@ -78,7 +78,7 @@ class NativeSoundTests(unittest.TestCase):
                 shutil.copyfile(folder / "music-off.wav", folder / "mix-input.wav")
                 subprocess.run(["ffmpeg", "-v", "error", "-i", str(folder / "mix-input.wav"), "-c:a", "aac", "-b:a", "192k", str(root / "fixture.m4a")], check=True)
                 subprocess.run(["ffmpeg", "-v", "error", "-i", str(root / "fixture.m4a"), "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(folder / "final-audio.wav")], check=True)
-                delivery = soundtrack.delivery_check(folder)
+                delivery = json.loads(subprocess.check_output(["/opt/venv/bin/python", "-I", str(profiles.ROOT / "soundtrack.py"), "check", str(folder)], text=True))
                 self.assertTrue(delivery["pass"], delivery)
                 evidence = {"fixture": "owned generated tone, not speech or final creative acceptance", "mix_job": mixed["id"], "summary": summary, "decoded_mix_check": delivery,
                             "profiles": listing, "host": os.uname().nodename}
