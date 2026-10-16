@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- v3 · Conversation first. Live conversation is the default; only two short supplements plus the real-source insert. -->
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<img id="live" alt="">
+
+<!-- Supplement 1 (14.565-18.765): the three moves, each arriving on its spoken word -->
+<div id="s4" class="scene">
+  <svg class="art" viewBox="0 0 1080 1920" xmlns="http://www.w3.org/2000/svg">
+    <text id="s4h" x="540" y="330" text-anchor="middle" class="anton" font-size="96" fill="#a19c96">WHEN AI ANSWERS</text>
+    <g transform="translate(540 520)">
+      <g id="s4card">
+        <rect x="-330" y="-115" width="660" height="230" rx="30" fill="#1d1b1e" stroke="#4d463f" stroke-width="5"/>
+        <text x="-286" y="-44" class="inter" font-size="46" fill="#a19c96">AI ANSWER</text>
+        <rect x="-286" y="0" width="500" height="22" rx="11" fill="#3b3733"/>
+        <rect x="-286" y="42" width="360" height="22" rx="11" fill="#3b3733"/>
+        <g transform="translate(250 -58)">
+          <circle r="42" id="s4badge" fill="#e2b55a"/>
+          <path id="s4check" d="M-20 2 L-6 16 L22 -14" fill="none" stroke="#141214" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+          <text id="s4q" x="0" y="24" text-anchor="middle" class="anton" font-size="68" fill="#141214">?</text>
+        </g>
+      </g>
+    </g>
+    <g id="s4t1"><rect x="140" y="720" width="800" height="138" rx="26" fill="#18161a" stroke="#e2b55a" stroke-width="4"/><circle cx="222" cy="789" r="44" fill="#e2b55a"/><text x="222" y="814" text-anchor="middle" class="anton" font-size="64" fill="#141214">1</text><text x="300" y="820" class="anton" font-size="86" fill="#f3eee6">PUSH BACK</text></g>
+    <g id="s4t2"><rect x="140" y="882" width="800" height="138" rx="26" fill="#18161a" stroke="#e2b55a" stroke-width="4"/><circle cx="222" cy="951" r="44" fill="#e2b55a"/><text x="222" y="976" text-anchor="middle" class="anton" font-size="64" fill="#141214">2</text><text x="300" y="982" class="anton" font-size="86" fill="#f3eee6">FOLLOW UP</text></g>
+    <g id="s4t3"><rect x="140" y="1044" width="800" height="138" rx="26" fill="#18161a" stroke="#e2b55a" stroke-width="4"/><circle cx="222" cy="1113" r="44" fill="#e2b55a"/><text x="222" y="1138" text-anchor="middle" class="anton" font-size="64" fill="#141214">3</text><text x="300" y="1144" class="anton" font-size="86" fill="#f3eee6">INVERT</text></g>
+  </svg>
+</div>
+
+<!-- 21.55-25.65: native fullscreen insert (assets/arxiv-source-broll.mp4, already uploaded) shows through #live; no scene drawn. -->
+
+<!-- Supplement 2 (31.930-35.000): the skepticism needle settles on HEALTHY -->
+<div id="s7" class="scene">
+  <svg class="art" viewBox="0 0 1080 1920" xmlns="http://www.w3.org/2000/svg">
+    <text id="s7h" x="540" y="372" text-anchor="middle" class="anton" font-size="112" fill="#f3eee6">SKEPTICISM</text>
+    <g id="s7arcs" fill="none" stroke-width="74"></g>
+    <text id="s7healthy" x="540" y="540" text-anchor="middle" class="anton" font-size="96" fill="#e2b55a">HEALTHY</text>
+    <text x="200" y="1046" text-anchor="middle" class="inter" font-size="46" fill="#e5533d">TRUST ALL</text>
+    <text x="880" y="1046" text-anchor="middle" class="inter" font-size="46" fill="#8fa3b6">DOUBT ALL</text>
+    <g transform="translate(540 960)">
+      <g id="s7needle">
+        <line x1="0" y1="0" x2="0" y2="-300" stroke="#f3eee6" stroke-width="16" stroke-linecap="round"/>
+      </g>
+      <circle r="36" fill="#f3eee6"/>
+      <circle r="14" fill="#141214"/>
+    </g>
+  </svg>
+</div>
+
+<script src="defleur/ledger.js"></script>
+<script src="defleur/gsap.min.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

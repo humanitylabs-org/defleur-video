@@ -1,0 +1,21 @@
+@font-face { font-family: "Anton"; src: url("fonts/anton.woff2") format("woff2"); font-weight: 400; font-display: block; }
+@font-face { font-family: "InterB"; src: url("fonts/inter-600.woff2") format("woff2"); font-weight: 600; font-display: block; }
+
+html, body { margin: 0; padding: 0; width: 1080px; height: 1920px; overflow: hidden; background: #000; }
+#live { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; display: block; }
+
+/* Every beat owns the full canvas: a dark backdrop that matches the studio set
+   (near-black acoustic foam, warm practical light from above). */
+.scene {
+  position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; overflow: hidden;
+  visibility: hidden; opacity: 0;
+  background-color: #08080a;
+  background-image:
+    radial-gradient(ellipse 900px 1100px at 50% 34%, rgba(64, 48, 34, 0.55) 0%, rgba(20, 17, 16, 0.4) 55%, rgba(0, 0, 0, 0) 100%),
+    url("assets/foam.svg");
+  background-size: 1080px 1920px, 120px 120px;
+}
+.scene svg.art { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; overflow: visible; }
+
+.anton { font-family: "Anton", sans-serif; text-transform: uppercase; }
+.inter { font-family: "InterB", sans-serif; font-weight: 600; }

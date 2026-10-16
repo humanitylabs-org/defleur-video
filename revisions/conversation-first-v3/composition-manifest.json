@@ -1,0 +1,58 @@
+{
+ "files_sha256": {
+  "index.html": "29200a32f595a6cf6cc02d9bc2f122e393148854ad694c1ae0f1f38f2d3fb138",
+  "style.css": "6e045979fcf639f1ef9462c716a3a3a5f6b0c6c118fade04a5dbf35d7f1dce9c",
+  "main.js": "d0979c1594f5472455c1e717300bae941003f5fb6f2a20fa91fddc26ba3c638e",
+  "assets/foam.svg": "970ad14ba4ac2880089306c1627b0494546f6e2a3e413524535649fa0b57b26e",
+  "fonts/anton.woff2": "d0fa07ff63dd60cbc0e2f58e29c802dca2a5ae0276c999f59c6111ab7bbaec3b",
+  "fonts/inter-600.woff2": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+ },
+ "plan": {
+  "beats": [
+   {
+    "start": 14.565,
+    "end": 18.765,
+    "spoken_anchor": "push back on it, ask follow-up questions, do inversion",
+    "viewer_inference": "Three concrete things to do with an AI answer, so the advice is understood at a glance.",
+    "visual_family": "typographic-explanation",
+    "state_before": "A confident AI ANSWER card with a gold check mark.",
+    "state_after": "Three stacked moves (1 PUSH BACK, 2 FOLLOW UP, 3 INVERT); the check has become a red '?' and the card is turned upside down.",
+    "causal_action": "Each move arrives on its spoken word: on 'push back' the check turns into a question, 'follow-up' adds the second move, on 'inversion' the answer card is flipped over.",
+    "caption_treatment": "show",
+    "speaker_return": "Back to the conversation at 18.765 s for 'be like, oh, but what about this?'."
+   },
+   {
+    "start": 31.93,
+    "end": 35.0,
+    "spoken_anchor": "always hold a healthy level of skepticism",
+    "viewer_inference": "The takeaway is balance: neither trust everything nor doubt everything.",
+    "visual_family": "diagram",
+    "state_before": "A skepticism meter with its needle at TRUST ALL.",
+    "state_after": "The needle rests on the gold HEALTHY zone.",
+    "causal_action": "On 'always hold' the needle swings past TRUST ALL toward DOUBT ALL, then settles on HEALTHY as he says 'healthy level of skepticism'.",
+    "caption_treatment": "show",
+    "speaker_return": "Back on the speaker at 35.0 s for 'no matter what information you're taking in' to close on his face."
+   }
+  ],
+  "caption_emphasis": [
+   2.3,
+   6.6,
+   8.8,
+   29.45,
+   34.2
+  ],
+  "caption_suppress": [],
+  "inserts": [
+   {
+    "start": 21.55,
+    "end": 25.65,
+    "asset": "assets/arxiv-source-broll.mp4",
+    "fit": "cover",
+    "clip_start_s": 0,
+    "reason": "Editor-added primary-source context while he says AI tells him 'this is the truth': unaltered live capture of arXiv:2509.04664 'Why Language Models Hallucinate' (Kalai, Nachum, Vempala, Zhang, 2025; captured 2026-10-15T20:03:42Z, PNG sha256 1f52d452...1220). Window scrolls from title/authors to the abstract and highlights its own words 'sometimes guess when uncertain' and 'plausible yet incorrect statements instead of admitting uncertainty'. General context only; not cited on camera and not proof of the anecdote. Clip sha256 95e4c819...0df1 (unchanged asset reused from arm B)."
+   }
+  ],
+  "notes": "v3 \u00b7 Conversation first (revision of arm B, project 1ba1957f8e4a4f4794a77e9f59ba4eaf; parent composition 22ab85bb05433c9aa4ea7d7a234268e0dcd5d5097fa4852f7ce6f431e8079ddc). James: animations supplemental, primarily two people talking, keep real-source scroll/highlight, no SFX, no music. Two supplements + one source insert = 11.37 s of 37.225 s; opening 0-14.565 s is uninterrupted conversation across both speakers. Final audio: speech-only premix (no sound_mix_job)."
+ },
+ "plan_sha256": "551f9863a98af64efda84da637daec1980872c028019834611d8b05b44d1ef36"
+}
