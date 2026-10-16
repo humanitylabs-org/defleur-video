@@ -39,7 +39,7 @@
     const d = 4.2, tl = T();
     inOut(tl, "#s4", d);
     tl.fromTo("#s4h", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 0.0);
-    tl.fromTo("#s4card", { y: -30, opacity: 0, rotation: 0 }, { y: 0, opacity: 1, duration: 0.35 }, 0.0);
+    tl.fromTo("#s4card", { y: -30, opacity: 0, scaleY: 1 }, { y: 0, opacity: 1, duration: 0.35 }, 0.0);
     tl.fromTo("#s4check", { opacity: 1 }, { opacity: 1, duration: 0.01 }, 0);
     tl.fromTo("#s4q", { opacity: 0 }, { opacity: 0, duration: 0.01 }, 0);
     tl.fromTo("#s4badge", { attr: { fill: GOLD } }, { attr: { fill: GOLD }, duration: 0.01 }, 0);
@@ -52,7 +52,8 @@
     tl.fromTo("#s4t2", { x: -60, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35 }, 2.35);
     // 3 INVERT: the answer is turned over.
     tl.fromTo("#s4t3", { x: -60, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35 }, 3.62);
-    tl.to("#s4card", { rotation: 180, duration: 0.45, ease: "power2.inOut" }, 3.68);
+    // Flip vertically in place (scaleY) so the card never leaves its own box or covers the headline.
+    tl.to("#s4card", { scaleY: -1, duration: 0.45, ease: "power2.inOut" }, 3.68);
     scene("#s4", 14.565, 18.765, tl);
   }
 
