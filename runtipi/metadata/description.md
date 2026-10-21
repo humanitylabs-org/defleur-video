@@ -1,6 +1,6 @@
-# DeFleur Video (Testing)
+# DeFleur Video
 
-Testing release of James DeFleur's DeFleur Video workflow, with his original helper scripts bundled. Hermes makes the editorial decisions; this app runs the media steps and returns evidence. It makes no LLM or paid calls.
+A packaging of James DeFleur's DeFleur Video workflow, with his original helper scripts bundled. Hermes makes the editorial decisions; this app runs the media steps and returns evidence. It makes no LLM or paid calls.
 
 **Built for Hermes Agent with Claude Opus 5.5.** Other agents and models work, but before importing anything the agent tells you which setup it is using and asks you to confirm.
 

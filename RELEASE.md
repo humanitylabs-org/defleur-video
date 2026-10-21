@@ -1,3 +1,7 @@
+# Release: 0.7.1 (name and version without the Testing label; no code change)
+
+The whole of Wizard OS is pre-release, so the store name drops "(Testing)" and the version drops `-testing`. Same code as 0.7.0-testing.
+
 # Release: 0.7.0-testing (captions always on; James' house style by default; image built in this repo)
 
 ## Captions stay on for the whole video (house preset)
