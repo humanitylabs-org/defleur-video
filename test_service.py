@@ -131,6 +131,15 @@ class MediaTests(unittest.TestCase):
         self.assertTrue(all(h['available'] for h in caps['helpers'].values()))
         self.assertFalse(caps['acoustic_ctc']['available'])
 
+    def test_capture_lock_matches_pin_and_notice_and_patched_zod(self):
+        import workflow
+        lock = json.loads((workflow.CAPTURE_DIR / "package-lock.json").read_text())["packages"]
+        pin = json.loads((workflow.CAPTURE_DIR / "package.json").read_text())["dependencies"]["puppeteer-core"]
+        self.assertEqual(lock["node_modules/puppeteer-core"]["version"], pin)
+        self.assertIn(f"puppeteer-core {pin} ", workflow.doc("notice").read_text())
+        zod = tuple(int(n) for n in lock["node_modules/zod"]["version"].split("."))
+        self.assertGreaterEqual(zod, (4, 6, 6))  # every zod below 4.6.6 is affected by the Dependabot advisory
+
     def test_actual_vfr_requires_picture_ledger(self):
         import workflow
         with tempfile.TemporaryDirectory(dir=self.root) as temp:

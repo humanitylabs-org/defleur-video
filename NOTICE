@@ -36,7 +36,7 @@ captionSuppressed handling, screenshots, and the reverse-seek determinism check
 are James' code, unchanged.
 
 Third-party runtime for capture (installed from capture/package-lock.json):
-puppeteer-core 25.12.0 (Apache-2.0) and its dependencies (MIT/ISC/BSD/Apache).
+puppeteer-core 25.13.0 (Apache-2.0) and its dependencies (MIT/ISC/BSD/Apache).
 GSAP 3.15.0 (Webflow "Standard no-charge" license, https://gsap.com/standard-license:
 free including commercial use; not for building no-code visual animation tools
 competing with Webflow), copied unmodified as defleur/gsap.min.js into each
