@@ -5,7 +5,12 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 IMAGE=${VIDEO_IMAGE:-wizard-defleur-video:0.6.5-testing}
-[ -n "${VIDEO_SKIP_BUILD:-}" ] || docker build -t "$IMAGE" "$ROOT"
+if [ -z "${VIDEO_SKIP_BUILD:-}" ]; then
+  REVISION=$(git -C "$ROOT" rev-parse --verify HEAD)
+  docker build \
+    --label org.opencontainers.image.source=https://github.com/humanitylabs-org/defleur-video \
+    --label "org.opencontainers.image.revision=$REVISION" -t "$IMAGE" "$ROOT"
+fi
 docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges --memory 10g --memory-swap 10g \
   --pids-limit 2048 --tmpfs /scratch:rw,noexec,nosuid,size=1024m,mode=1777 \
