@@ -97,7 +97,7 @@ def guide(project=None):
             'modules': {
                 'edit': 'Import -> start_edit -> apply_cuts -> render_final(options={"motion":false}). Cuts, fixed crop and house captions only. No authorship warning, Browser, image or motion dependency.',
                 'motion': 'Choose labels, components and spoken pivots, not HTML. submit_motion(files={},plan={duration,beats}) compiles the app kit. For motion-only Shorts >=30s with 3+ beats, explicitly set project mix_required:false with owner/project reason.',
-                'visuals': 'plan_visual builds the exact pinned prompt and references. generate_visual reports connection blockers without substitution. Upload the resulting PNG through prepare_asset_upload, then attach_visual; finally use image-beat.'},
+                'visuals': 'plan_visual builds the exact pinned prompt and references. generate_visual reports connection blockers without substitution. Upload the resulting PNG through create_asset_upload, then attach_visual; finally use image-beat.'},
             'direction': (KIT / 'INSTRUCTIONS.md').read_text(),
             'mix_suggestion': 'Image -> mechanism -> image. Each beat must do a different job, then clear back to the full-frame speaker.',
             'submit_example': {'files': {}, 'plan': {'duration': 20, 'beats': [
@@ -288,7 +288,7 @@ def plan_visual(project, beat_id, family, subject):
              'width': 1080, 'height': 1920, 'state': 'planned', 'reference': f['reference'],
              'reference_url': f'/v1/house/references/{f["reference"]["file"]}' if f['reference'].get('file') else None,
              'generation_allowed': f['generation_allowed'],
-             'upload': {'prepare_asset_upload': {'path': f'assets/{beat_id}.png'},
+             'upload': {'create_asset_upload': {'path': f'assets/{beat_id}.png'},
                         'attach_visual': {'beat_id': beat_id, 'model': MODEL, 'asset': f'assets/{beat_id}.png'}}}
     write(under(project, 'visuals', f'{beat_id}.json'), state)
     return state
@@ -384,7 +384,7 @@ def attach_visual(project, beat_id, asset, model):
         raise Rejected('attach the exact project-local upload path from plan_visual')
     file = under(project, 'motion', 'src', 'assets', beat_id + '.png')
     if not file.is_file() or file.is_symlink():
-        raise Rejected('upload the PNG with prepare_asset_upload first')
+        raise Rejected('upload the PNG with create_asset_upload first')
     data = file.read_bytes()
     png_size(data)
     state.update(state='attached', asset=asset, sha256=hashlib.sha256(data).hexdigest(),

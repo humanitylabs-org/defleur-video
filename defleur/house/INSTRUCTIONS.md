@@ -36,7 +36,7 @@ or another provider. A missing grant/route/image transport returns the exact
 blocker and exact prompt/reference/upload instructions. Stop there; never claim
 an image was generated. The currently published router transport is text-only;
 no speculative image API is used. After an externally generated image is
-uploaded through `prepare_asset_upload`, call `attach_visual` with the exact
+uploaded through `create_asset_upload`, call `attach_visual` with the exact
 asset path and declared model. Model declarations are recorded honestly, not
 misrepresented as provider attestation. A changed image hash invalidates capture.
 Use `component:"image-beat",visual_id:beat_id,labels:[]` for shaped cut-in and a

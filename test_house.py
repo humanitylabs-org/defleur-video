@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import tempfile
@@ -232,3 +233,12 @@ class HouseFontPreloadTest(unittest.TestCase):
         for cx in bars:
             for a, b in cards:
                 self.assertFalse(a < cx + 12 and cx - 12 < b, (cx, a, b))
+
+
+class VisualUploadToolNameTest(unittest.TestCase):
+    def test_guidance_names_only_real_upload_tool(self):
+        root = Path(__file__).resolve().parent
+        tools = set(re.findall(r"def (\w+)\(", (root / 'mcp_server.py').read_text()))
+        for rel in ('house.py', 'SKILL.md', 'defleur/house/INSTRUCTIONS.md', 'mcp_server.py'):
+            for name in re.findall(r"\b(\w+_asset_upload)\b", (root / rel).read_text()):
+                self.assertIn(name, tools, (rel, name))

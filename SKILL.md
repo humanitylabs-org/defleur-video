@@ -33,7 +33,7 @@ active instructions are shipped in `defleur/house/INSTRUCTIONS.md`, served by
   `generate_visual` uses only this app's authorized box connection or returns the
   exact blocker with prompt/reference/upload instructions. Model is exactly
   **gpt-image-2-high**, PNG exactly **1080×1920**. No substitute provider. Upload
-  through prepare_asset_upload, then `attach_visual`; model declarations on
+  through create_asset_upload, then `attach_visual`; model declarations on
   external uploads are not independently attested. Use the kit's image-beat.
 
 ## Conversation first · default James direction

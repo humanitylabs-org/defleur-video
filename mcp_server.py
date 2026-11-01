@@ -931,7 +931,7 @@ def generate_visual(project_id: str, beat_id: str) -> dict:
     return _result(lambda: api("POST", f"/v1/projects/{project_id}/generate-visual", {"beat_id": beat_id}))
 
 
-@mcp.tool(description="After prepare_asset_upload uploads the exact PNG from plan_visual: check gpt-image-2-high model declaration, dimensions and complete PNG, bind its hash and provenance, then use image-beat. External model declarations are not independent attestation.")
+@mcp.tool(description="After create_asset_upload uploads the exact PNG from plan_visual: check gpt-image-2-high model declaration, dimensions and complete PNG, bind its hash and provenance, then use image-beat. External model declarations are not independent attestation.")
 def attach_visual(project_id: str, beat_id: str, asset: str, model: str) -> dict:
     return _result(lambda: api("POST", f"/v1/projects/{project_id}/attach-visual", {"beat_id": beat_id, "asset": asset, "model": model}))
 
