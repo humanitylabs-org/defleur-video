@@ -217,8 +217,18 @@ if __name__=='__main__':unittest.main(verbosity=2)
 
 class HouseFontPreloadTest(unittest.TestCase):
     def test_kit_loads_house_fonts_before_first_beat(self):
-        js = (Path(__file__).resolve().parent / 'defleur/house/content/components.js').read_text()
+        import house
+        js = (house.KIT / 'content' / 'components.js').read_text()
         self.assertIn("document.fonts.load", js)
         self.assertIn("52px Anton", js)
         self.assertIn("600 52px Inter", js)
         self.assertLess(js.index('houseFontsReady'), js.rindex('window.renderFrame(0)'))
+
+    def test_routine_bars_stay_in_gutters(self):
+        import house, re
+        js = (house.KIT / 'content' / 'components.js').read_text()
+        bars = [int(x) for x in re.search(r'for\(const cx of \[([0-9,]+)\]\)', js).group(1).split(',')]
+        cards = [(180 + c * 190, 180 + c * 190 + 150) for c in range(4)]
+        for cx in bars:
+            for a, b in cards:
+                self.assertFalse(a < cx + 12 and cx - 12 < b, (cx, a, b))

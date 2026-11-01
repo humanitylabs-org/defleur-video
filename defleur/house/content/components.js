@@ -55,7 +55,7 @@
     'routine-grid'(b,p) {
       let out=text(540,350,b.labels[0],72);const count=1+Math.floor(15*p);
       for(let i=0;i<count;i++){const x=180+(i%4)*190,y=460+Math.floor(i/4)*145;out+=box(x,y,150,120)+circle(x+40,y+60,20,C.dim)+text(x+105,y+76,'8:30',36);}
-      if(p>.8)for(let i=0;i<7;i++)out+=`<rect x="${162+i*123}" y="425" width="24" height="650" rx="6" fill="${C.dim}"/>`;
+      if(p>.8)for(const cx of [158,350,540,730,922])out+=`<rect x="${cx-12}" y="425" width="24" height="650" rx="6" fill="${C.dim}"/>`; // bars sit in the gutters, never across a card
       return out+text(540,1140,b.labels[1] || (p>.8?'A SENTENCE':''),62,C.gold);
     },
     'quality-area'(b,p) {
