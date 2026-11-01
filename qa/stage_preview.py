@@ -28,7 +28,9 @@ actual=json.loads(subprocess.check_output(['docker','image','inspect',image],tex
 if actual['Id']!=identity or actual['Config']['Labels'].get('org.opencontainers.image.revision')!=sha:raise SystemExit('Candidate image identity changed')
 name='defleur-house-preview';browser=name+'-browser';network=name+'-network';volume=name+'-data'
 if subprocess.run(['docker','container','inspect',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:raise SystemExit('Preview already exists; do not replace it blindly')
+subprocess.run(['systemctl','--user','show-environment'],check=True,stdout=subprocess.DEVNULL)
 root=Path.home()/'wizard-local'/name;root.mkdir(parents=True,exist_ok=True);root.chmod(0o700)
+expires=datetime.now(timezone.utc)+timedelta(days=7)
 token=secrets.token_urlsafe(36)
 env=root/'preview.env';env.write_text('VIDEO_API_TOKEN='+token+'\nVIDEO_DATA_DIR=/data\nVIDEO_BIND=0.0.0.0\nBROWSER_URL=http://'+browser+':9222\n');env.chmod(0o600)
 labels=['--label','org.wizard.preview.owner=defleur-house-pipeline','--label','org.opencontainers.image.revision='+sha]
@@ -78,12 +80,20 @@ if isinstance(mcp,bytes):
 if not isinstance(mcp,dict) or not mcp.get('result',{}).get('protocolVersion'):
     raise SystemExit('Preview MCP initialize did not return a valid protocol result')
 safe_inspect=json.loads(subprocess.check_output(['docker','inspect',name],text=True))[0]
+units=Path.home()/'.config/systemd/user';units.mkdir(parents=True,exist_ok=True)
+expiry_unit='defleur-house-preview-expiry'
+(units/(expiry_unit+'.service')).write_text('[Unit]\nDescription=Stop expired isolated DeFleur house preview\n[Service]\nType=oneshot\nExecStart=/usr/bin/docker stop '+name+' '+browser+'\n')
+(units/(expiry_unit+'.timer')).write_text('[Unit]\nDescription=Expire isolated DeFleur preview after seven days\n[Timer]\nOnCalendar='+expires.strftime('%Y-%m-%d %H:%M:%S UTC')+'\nPersistent=true\n[Install]\nWantedBy=timers.target\n')
+subprocess.run(['systemctl','--user','daemon-reload'],check=True)
+subprocess.run(['systemctl','--user','enable','--now',expiry_unit+'.timer'],check=True)
+if subprocess.check_output(['systemctl','--user','is-active',expiry_unit+'.timer'],text=True).strip()!='active':
+    raise SystemExit('Preview expiry timer is not active')
 receipt={'stage':'isolated developer preview; not a managed/live installation','source_revision':sha,'image':image,'image_id':identity,
     'url':f'http://{a.tailnet_ip}:{a.port}','mcp':f'http://{a.tailnet_ip}:{a.port}/mcp','authentication':'Bearer from owner-only preview.env on worker; token intentionally omitted',
     'health':health,'container':name,'browser':browser,'installed_skill_sha256':hashlib.sha256(skill).hexdigest(),'installed_equals_release':True,
     'default_preset':guide['policy']['preset'],'generation_probe':generation,'temporary_probe_project_deleted':True,
     'mcp_initialize_received':bool(mcp),'actual_container_image':safe_inspect['Image'],'actual_ports':safe_inspect['NetworkSettings']['Ports'],
-    'expires_at':(datetime.now(timezone.utc)+timedelta(days=7)).isoformat(),
+    'expires_at':expires.isoformat(),'expiry_timer':expiry_unit+'.timer','expiry_timer_active':True,
     'cleanup_commands':[['docker','rm','-f',name,browser],['docker','network','rm',network]],
     'retained_preview_data_volume':volume,'limitations':['No live/company container, installed skill or routing registry was modified.','Preview image generation blocker is reported verbatim; no substitute provider/model was called.','Creator must independently review screenshots and native output before any acceptance/promotion.']}
 (root/'STAGE.json').write_text(json.dumps(receipt,indent=2));(root/'STAGE.json').chmod(0o600)

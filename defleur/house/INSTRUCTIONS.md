@@ -2,7 +2,7 @@
 
 This app release activates the editorial direction formerly preserved on the
 Conversation-first branches. Historical artifacts are packaged under
-`house/historical/` unchanged; their instruction-only status is not the status
+`house/content/historical/` unchanged; their instruction-only status is not the status
 of this release. Native audio, alignment, captions, crop and delivery helpers
 remain byte-pinned. Style is app-owned data and assets, never an agent's notes.
 

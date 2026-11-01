@@ -93,7 +93,7 @@ def guide(project=None):
             'mix_suggestion': 'Image -> mechanism -> image. Each beat must do a different job, then clear back to the full-frame speaker.',
             'submit_example': {'files': {}, 'plan': {'duration': 20, 'beats': [
                 {'id': 'mechanism', 'component': 'meter', 'start': 3.5, 'end': 6.5,
-                 'labels': ['TRUST ALL', 'HEALTHY', 'DOUBT ALL'], 'font': 'Anton', 'color': '#e9b45c',
+                 'labels': ['TRUST ALL', 'HEALTHY', 'DOUBT ALL'], 'font': 'Anton', 'color': policy(project)['default_color'],
                  'phases': [{'at': 4.5, 'word': 'healthy', 'action': 'settle'}],
                  'spoken_anchor': 'a healthy level of skepticism', 'viewer_inference': 'one inference',
                  'state_before': 'one state', 'state_after': 'changed state',
@@ -215,8 +215,8 @@ def compile_files(plan, project=None):
              '<script src="defleur/ledger.js"></script><script src="defleur/gsap.min.js"></script>'
              '<script id="house-plan" type="application/json">' + body + '</script>'
              '<script src="house/components.js"></script>',
-             'house/house.css': (KIT / 'house.css').read_text(),
-             'house/components.js': (KIT / 'components.js').read_text()}
+             'house/house.css': (KIT / 'content' / 'house.css').read_text(),
+             'house/components.js': (KIT / 'content' / 'components.js').read_text()}
     import base64
     for name in ('anton.woff2', 'inter-600.woff2'):
         files[f'house/{name}'] = {'base64': base64.b64encode((KIT / name).read_bytes()).decode()}

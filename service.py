@@ -1266,9 +1266,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise FileNotFoundError("house reference not packaged (source rights/context required)")
             return self.send_file(ref, "image/jpeg", hashlib.sha256(ref.read_bytes()).hexdigest())
         if len(parts) == 5 and parts[1:3] == ["v1", "projects"] and parts[4] in ("house-policy", "plan-visual", "generate-visual", "attach-visual"):
-            store.project(parts[3])
-            # project() rejects malformed identifiers first; basename is defense-in-depth, not token repair.
-            folder = store.path(os.path.basename(parts[3]))
+            project = store.project(parts[3])
+            if project.get('id') != parts[3]:
+                raise Rejected("project record identity mismatch")
+            # Resolve only the stored, server-generated identity after validating the exact request token.
+            folder = store.path(project['id'])
             if method == "GET" and parts[4] == "house-policy":
                 return self.send(200, house.guide(folder))
             if method == "POST":
