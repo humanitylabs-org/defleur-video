@@ -1,0 +1,14 @@
+@font-face{font-family:Anton;src:url('anton.woff2') format('woff2');font-display:block}
+@font-face{font-family:Inter;src:url('inter-600.woff2') format('woff2');font-weight:600;font-display:block}
+:root{--house-bg:#08080a;--house-paper:#f3ece2;--house-gold:#e9b45c;--house-red:#e5533d;--house-dim:#6b6258;--house-blue:#8fb0de}
+html,body{margin:0;padding:0;width:1080px;height:1920px;overflow:hidden;background:#000}
+#live{position:absolute;inset:0;width:1080px;height:1920px;display:block}
+#house{position:absolute;inset:0;pointer-events:none}
+.house-scene{position:absolute;inset:0;overflow:hidden;visibility:hidden;background-color:var(--house-bg);background-image:radial-gradient(ellipse 980px 1180px at 46% 36%,rgba(78,56,36,.58),rgba(24,19,16,.42) 55%,transparent),repeating-linear-gradient(135deg,transparent 0 45px,rgba(243,236,226,.025) 46px 48px,transparent 49px 96px)}
+.house-scene svg{width:1080px;height:1920px;position:absolute;inset:0}
+.house-scene text{font-family:inherit;fill:var(--house-paper);font-size:52px;text-anchor:middle}
+.house-scene text.small{font-family:Inter;font-size:36px;font-weight:600}
+.house-scene .illustration{position:absolute;width:1080px;height:1920px;object-fit:cover;inset:0;transform-origin:50% 42%;clip-path:inset(40px 30px 40px 30px round 32px)}
+.house-scene .image-scrim{position:absolute;inset:0;background:linear-gradient(transparent 59%,rgba(8,8,10,.7) 76%,rgba(8,8,10,.8))}
+.house-scene.image{background:none}
+.house-scene .source{position:absolute;left:100px;top:340px;width:880px;height:790px;object-fit:contain;background:#f3ece2;clip-path:inset(0 round 20px)}

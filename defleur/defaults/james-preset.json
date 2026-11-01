@@ -56,5 +56,58 @@
       "typographic-explanation",
       "illustration"
     ]
+  },
+  "house": {
+    "direction": "conversation-first-v3.1",
+    "fonts": [
+      "Anton",
+      "Inter"
+    ],
+    "palette": [
+      "#08080a",
+      "#f3ece2",
+      "#e9b45c",
+      "#e5533d",
+      "#6b6258",
+      "#8fb0de",
+      "#e2b55a",
+      "#8fa3b6",
+      "#5c544b",
+      "#8a3b30",
+      "#c3a2e6",
+      "#c98a4c",
+      "#cfc6b8",
+      "#ef8a6e",
+      "#f3d79a",
+      "#fff3dc"
+    ],
+    "default_color": "#e9b45c",
+    "max_label_words": 4,
+    "max_labels": 6,
+    "max_beat_seconds": 11.6,
+    "first_visual_window": [
+      3,
+      5
+    ],
+    "max_graphic_fraction": 0.5,
+    "min_clean_gap_seconds": 1,
+    "closing_speaker_seconds": 1,
+    "mix_required": true,
+    "mix_min_seconds": 30,
+    "mix_min_beats": 3,
+    "image_model": "gpt-image-2-high",
+    "image_size": [
+      1080,
+      1920
+    ],
+    "policy_basis": {
+      "palette": "Exact colors from Conversation first v3 and v3.1 SVG/JS/CSS; primary warm/gold/near-black tokens from v3.1.",
+      "max_beat_seconds": "Longest approved Longevity beat: 27.45-15.85 = 11.60s.",
+      "coverage": "v3.1 majority-clean requirement means strictly below 50%; Longevity is 30.4/75.89 = 40.06%.",
+      "first_visual": "v3.1 instructions: first meaningful supporting visual enters at 3-5 seconds.",
+      "labels": "Small labels not sentences; 4-word ceiling covers approved labels.",
+      "clean_return": "1s minimum encodes clear speaker return; longer uninterrupted stretches remain editorial judgment.",
+      "mix": "Owner-approved image/mechanism alternation, applied to 30s+ and 3+ beats. Historical motion-only references need explicit, reasoned project relaxation."
+    }
   }
 }

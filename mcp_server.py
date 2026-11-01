@@ -253,6 +253,27 @@ GUIDE = {
 }
 
 
+# Active release guidance supersedes the pre-house author-your-own-HTML guide.
+GUIDE.update(
+    what_this_app_does="Native audio/edit, fixed crops and captions plus independent app-owned house motion and visual planning/attachment. No agent memory controls the rendered house style.",
+    default_edit="Choose Module A independently; when visuals are requested use Conversation-first v3.1 and Image -> mechanism -> image, not continuous motion.",
+    steps=[
+        "0. workflow_guide: module edit has no author-model warning; motion/visuals/mixed includes the intended creative-author check.",
+        "1. capabilities: Transcriber for all edits, Browser only when rendering motion.",
+        "2. list_files + import_file, or create_upload if Files is unavailable.",
+        "3. start_edit -> get_status until done; inspect transcript, cut proposals and untranscribed/noisy gaps.",
+        "4. Draft cuts and, when requested, sparse typed house beats. First support at 3-5 edited seconds; majority clean conversation.",
+        "5. ONE approval question: cuts + motion plan together when visuals are requested. Module A asks about cuts only.",
+        "6. apply_cuts -> get_status; an empty cut list keeps the whole source. Restore incomplete words and inspect dialogue gates. Convert source timing using time_map.",
+        "7. For visuals: plan_visual -> generate_visual or exact blocker -> upload PNG -> attach_visual. submit_motion -> capture_motion smoke -> inspect -> proof -> inspect phone-size frames.",
+        "8. preview_framing if needed; same framing for proof and final. No moving detector-driven crop.",
+        "9. render_final(project_id, {'motion': true}) only after proof; Module A uses {'motion': false} or {'style':'captions'} without a fallback warning.",
+        "10. get_status until done/failed; report native gate results, complete words, decoded hash, caption/crop evidence and private unapproved link. No publishing."
+    ],
+)
+GUIDE['native_capture_contract'] = GUIDE.pop('motion_contract')
+GUIDE['native_capture_contract_note'] = "This is the engine contract supplied by the kit. Arbitrary author HTML is only available under an explicit neutral project preset."
+
 # ---------- loopback API ----------
 
 def api(method: str, path: str, body: Any = None, raw: bool = False, timeout: float = 70):
@@ -839,12 +860,13 @@ def do_render_final(run: dict) -> dict:
 # ---------- MCP tools ----------
 
 mcp = MCPServer("defleur-video", version=VERSION, instructions=(
-    "DeFleur Video edits talking-head videos on the owner's own server into finished 1080x1920 shorts WITH motion graphics. "
-    "Start with workflow_guide(agent_harness, agent_model) and follow its agent_check: if it asks for owner confirmation, show its warning and wait for a yes. "
-    "Default flow: capabilities -> list_files -> import_file -> start_edit -> get_status -> draft cuts AND a motion plan -> ONE owner approval "
-    "for both -> apply_cuts -> get_status -> submit_motion -> capture_motion smoke -> look -> proof -> look -> render_final({'motion': true}) -> "
-    "get_status (live progress) -> report the beats delivered and where the MP4 is (Files -> Videos -> Edited). Render plain ({}) only if the "
-    "owner asks, the Browser app is missing, or capture keeps failing, and say why. Editing judgment: SKILL.md (resource defleur-video://SKILL.md)."))
+    "DeFleur has three independent app-owned modules. Read workflow_guide(agent_harness, agent_model, module) and SKILL.md. "
+    "Module edit: import -> start_edit -> ONE owner approval for cuts -> apply_cuts -> render_final(options={'motion':false}); "
+    "no Opus warning, Browser or image dependency. Modules motion/visuals/mixed: Conversation-first v3.1, first support at 3-5s, "
+    "majority clean conversation, house fonts/palette/components; Image -> mechanism -> image. Plan typed beats, never custom HTML in James. "
+    "ONE combined cuts + visual plan approval, then apply_cuts -> plan_visual/generate_visual/attach_visual as needed -> submit_motion files={} -> "
+    "capture_motion smoke/proof and inspect -> render_final({'motion': true}). get_status until done/failed; report native gates, words, "
+    "caption/crop evidence, hash and private unapproved MP4. No music/SFX or public posting. Image connection blockers must not trigger another provider."))
 
 
 SKILL_FILE = Path(__file__).with_name("SKILL.md")
@@ -866,11 +888,52 @@ def _result(fn, *a, **kw):
 @mcp.tool(description=(
     "Call this FIRST when the user wants to edit a video, with agent_harness = the agent harness you run in (e.g. 'Hermes Agent', "
     "'Claude Code', 'Cursor') and agent_model = your exact model id. Returns agent_check (intended setup: Hermes Agent + Claude Opus 5.5; "
-    "if requires_owner_confirmation, show the owner its warning and wait for a yes before importing), the default edit (approved cuts "
+    "warning applies only to requested creative modules, never Module A), the independent modules (approved cuts "
     "+ motion graphics + captions + crop), the exact tool order (one combined cut + motion-plan approval, then apply_cuts, submit_motion, "
     "capture_motion smoke/proof, render_final({'motion': true})), James DeFleur's motion_contract, limits and what is not automated."))
-def workflow_guide(ctx: Context, agent_harness: str | None = None, agent_model: str | None = None) -> dict:
-    return {"agent_check": agent_check(agent_harness, agent_model, client_from(ctx)), **GUIDE}
+def workflow_guide(ctx: Context, agent_harness: str | None = None, agent_model: str | None = None,
+                   module: str = "edit") -> dict:
+    if module not in ("edit", "motion", "visuals", "mixed"):
+        return {"error": "module must be edit, motion, visuals or mixed"}
+    check = agent_check(agent_harness, agent_model, client_from(ctx))
+    if module == "edit":
+        check.update(requires_owner_confirmation=False, warning=None,
+                     next="Module A needs no motion author or model approval; continue with cuts and captions.")
+    house_guide = api("GET", "/v1/house")
+    return {"agent_check": check, "selected_module": module, "house": house_guide,
+            "technical_workflow": GUIDE if module != "edit" else {
+                "steps": ["import_file/create_upload", "start_edit", "review analysis and ask ONE cut approval",
+                          "apply_cuts", "render_final(options={'motion': false})", "get_status until done; review delivery gates"],
+                "note": "No motion, images, Opus, Browser or sound effects required."}}
+
+
+@mcp.tool(description="Read the shipped house kit, Conversation-first instructions, policy, seven visual families and typed beat example. No outside agent skill is needed.")
+def house_guide(project_id: str | None = None) -> dict:
+    return _result(lambda: api("GET", f"/v1/projects/{project_id}/house-policy" if project_id else "/v1/house"))
+
+
+@mcp.tool(description="Explicit owner/project preset exception. Supply a reason; use preset neutral for custom HTML or mix_required false for a deliberate motion-only project. Changes are persisted and visible in house_guide.")
+def set_house_policy(project_id: str, reason: str, preset: str = "james", mix_required: bool = True,
+                     first_visual_window: list[float] | None = None) -> dict:
+    value = {"preset": preset, "mix_required": mix_required, "reason": reason}
+    if first_visual_window is not None:
+        value['first_visual_window'] = first_visual_window
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/house-policy", value))
+
+
+@mcp.tool(description="Module C: build the app-owned prompt and archive reference for a generated illustrative beat. Returns pinned gpt-image-2-high, exact 1080x1920 PNG size and upload/attach instructions. Does not author the subject for you or generate fake evidence.")
+def plan_visual(project_id: str, beat_id: str, family: str, subject: str) -> dict:
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/plan-visual", {"beat_id": beat_id, "family": family, "subject": subject}))
+
+
+@mcp.tool(description="Attempt generation only through this app's existing authorized box Connection Router. If the route/transport is absent, returns the exact blocker, app prompt and reference; never calls another provider or model.")
+def generate_visual(project_id: str, beat_id: str) -> dict:
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/generate-visual", {"beat_id": beat_id}))
+
+
+@mcp.tool(description="After create_asset_upload uploads the exact PNG from plan_visual: check gpt-image-2-high model declaration, dimensions and complete PNG, bind its hash and provenance, then use image-beat. External model declarations are not independent attestation.")
+def attach_visual(project_id: str, beat_id: str, asset: str, model: str) -> dict:
+    return _result(lambda: api("POST", f"/v1/projects/{project_id}/attach-visual", {"beat_id": beat_id, "asset": asset, "model": model}))
 
 
 @mcp.tool(description=(
@@ -1148,14 +1211,14 @@ def capture_motion(project_id: str, mode: str, ctx: Context, framing: dict | Non
 
 
 @mcp.tool(description=(
-    "Step 9, after apply_cuts and a passing capture_motion 'proof'. Default options: {'motion': true} (motion graphics are the default "
+    "Step 9: Module A after apply_cuts uses options={'motion':false} or {'style':'captions'}; independent cuts/captions/crop. Motion modules need a passing capture_motion proof. ("
     "DeFleur edit). Renders the finished vertical short in the background and "
     "returns a run_id: face audit and one fixed 9:16 crop per setup (centered and flagged if no face is found), burned-in "
     "captions from the edited-audio word timings (James' caption_layer.py), the 1080x1920 H.264/AAC encode and --verify-only "
     "(James' encode.py), full decode, decoded-pixel crop/caption checks, re-transcription of the final audio and James' "
     "delivery gate. Keep calling get_status(run_id) until 'done' for resolution, duration, crop summary, caption count, gate "
     "result, words lost, beats_delivered and download URLs. get_status shows live elapsed_s, sub_stage and estimate_remaining_s. "
-    "options: {} = plain live footage + captions, ONLY when the owner asked for no motion, the Browser app is missing or capture keeps "
+    "options: {} or {motion:false} = independent Module A live footage + captions, no author-model warning or Browser requirement. Legacy plain_reason is optional. Capture "
     "failing (pass 'plain_reason': '<why>' and tell the owner); "
     "{'motion': true} after a passing capture_motion 'proof' of the current composition (full capture of every frame, "
     "motion-window and caption-suppression checks); {'framing': {...}} as in preview_framing (with motion, the proof's "
@@ -1165,8 +1228,14 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex project id")
         opts = options or {}
-        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason"}:
+        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "style"}:
             raise ToolError("options may contain only 'motion' (bool), 'framing' (object) and 'plain_reason' (text)")
+        if 'style' in opts:
+            if opts['style'] != 'captions' or opts.get('motion'):
+                raise ToolError("style captions is Module A and cannot request motion")
+            opts['motion'] = False
+        if 'motion' in opts and type(opts['motion']) is not bool:
+            raise ToolError("motion must be boolean")
         cuts = runs_for(project_id, "apply_cuts", "done")
         if not cuts:
             raise ToolError("run apply_cuts for this project first and wait for it to finish (get_status)")
@@ -1191,9 +1260,7 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
                           "~35 min at 60 fps); tell the owner." if proof else
                           "Plain render: about 1.5-3x the video length.")}
         if not proof:
-            out["plain_note"] = ("This is a PLAIN render (no motion graphics). Motion graphics are the default DeFleur edit: tell the owner "
-                                 "why this one is plain" + (f" ({str(opts['plain_reason'])[:200]})" if opts.get("plain_reason") else
-                                                            " (owner asked / Browser app missing / capture failed)") + ".")
+            out["plain_note"] = "Module A: cuts + house captions + fixed crop. No motion, image generation or model approval needed."
         return out
     return _result(go)
 

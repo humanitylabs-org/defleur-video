@@ -1,0 +1,27 @@
+{
+  "title": "Longevity isn't the same as living",
+  "preferred_workflow": "conversation-first-v3.1",
+  "author_model": "claude-opus-5-5",
+  "harness": "Hermes Agent",
+  "author_session": "20261016_081147_60cae3",
+  "source_master_sha256": "7d8b3a35dbfa60c909882344ed8a6133c8d2c38d75cfa0bcefb9417e7a834e61",
+  "source_master_range_s": [
+    3798.17,
+    3875.1
+  ],
+  "native_project": "8120f2a34e7e4579af4ae6d80eb2f768",
+  "native_final_run": "run-e99d8f2ba313403d8286bf29126e389e",
+  "composition_native_sha256": "5b0272fbbbd673520a7ad33c81c549822823aac1e4737a22bd647c0aa50598db",
+  "final_sha256": "dc6ae7bdab3e1bdb050deed7dfac49fdcce4098af3a43ae6cfd4dc859cd3e305",
+  "duration_s": 75.89,
+  "first_visual_s": 3.45,
+  "soundtrack": null,
+  "music": false,
+  "sfx": false,
+  "human_approved": false,
+  "review_notes": [
+    "Minor terminal marker outside the orange area remains inside safe bounds and does not obscure labels; accepted for private review.",
+    "Single original camera angle includes listener footage during the second voice.",
+    "Native face-margin flag reaches caption band at chin/neck; inspected sample frames retain mouth/eyes and legible captions."
+  ]
+}

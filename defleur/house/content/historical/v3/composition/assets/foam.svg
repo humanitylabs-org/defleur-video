@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
+  <g id="p">
+    <polygon points="0,0 60,0 30,30" fill="#141315"/>
+    <polygon points="60,0 60,60 30,30" fill="#0b0b0c"/>
+    <polygon points="0,60 60,60 30,30" fill="#09090a"/>
+    <polygon points="0,0 0,60 30,30" fill="#111012"/>
+  </g>
+  <use href="#p" x="60" y="0"/>
+  <use href="#p" x="0" y="60"/>
+  <use href="#p" x="60" y="60"/>
+</svg>

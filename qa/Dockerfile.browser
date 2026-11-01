@@ -1,0 +1,5 @@
+# QA only: native amd64 on the Linux worker, never a release image.
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
+RUN python -m pip install --no-cache-dir playwright==1.55.0 Pillow==11.3.0
+WORKDIR /work
+ENTRYPOINT ["python"]

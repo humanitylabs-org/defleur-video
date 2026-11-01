@@ -20,6 +20,7 @@ import wave
 
 from editing import DURATION_TOLERANCE_S, Rejected
 import motion
+import house
 import transcriber
 
 UPSTREAM_ROOT = Path(os.environ.get("DEFLEUR_ROOT") or ("/opt/defleur" if Path("/opt/defleur").is_dir() else Path(__file__).with_name("defleur")))
@@ -58,9 +59,10 @@ HELPERS = {
     "caption_layer": ("skills/defleur-motion/scripts/caption_layer.py", "6dd0a823bb6cee5212888f9b56707bb1788b43a3bebff180adefd73bd6d246f3"),
     "test_audio_gate": ("skills/defleur-audio/scripts/test_audio_gate.py", "09bba3c7ed527149aba5d9d034e8d8fe210ce230eacf9c961302c01b2707b177"),
 }
-DEFAULTS = ("defaults/james-preset.json", "de7e9d9659d06b91abfff22ffb096287ec25b3f0afa448c9a8ddac2f5cb38396")
+DEFAULTS = ("defaults/james-preset.json", "e438eca09f9024feaa9670efa9d216b5cf662b7c0211c12d18885ba79c469156")
 
 DOCS = {
+    "house-guide": "house/INSTRUCTIONS.md", "house-families": "house/families.json",
     "notice": "NOTICE", "readme": "README.md", "setup": "SETUP.md", "neutral-preset": "defaults/neutral-preset.json", "james-preset": "defaults/james-preset.json",
     "defleur-edit": "skills/defleur-edit/SKILL.md", "defleur-edit-contract": "skills/defleur-edit/references/project-contract.md",
     "defleur-audio": "skills/defleur-audio/SKILL.md", "defleur-audio-contract": "skills/defleur-audio/references/audio-contract.md",
@@ -1047,6 +1049,7 @@ def _motion_root(ctx, value, mode):
     mapped = json.loads(edit_map.read_text())
     if float(mapped["duration"]) > MAX_OUTPUT_S:
         raise Rejected(f"edited video is {mapped['duration']:.0f} s; the limit is {MAX_OUTPUT_S:.0f} s of output")
+    house.verify_submission(project, st["plan"], float(mapped["duration"]))
     plan = motion.validate_plan(st["plan"], float(mapped["duration"]), {r["path"] for r in st["files"]})
     fps = float(Fraction(str(mapped["fps"])))
     frames = int(mapped["frames"])

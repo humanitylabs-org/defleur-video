@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "house": {"fonts": ["Anton", "Inter"], "palette": ["#08080a", "#f3ece2", "#6b6258"], "default_color": "#f3ece2", "mix_required": false, "custom_compositions": true},
   "caption": {
     "font_path": "",
     "font_size_px": 54,
