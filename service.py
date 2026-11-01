@@ -1259,14 +1259,16 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and self.path == "/v1/house":
             return self.send(200, house.guide())
         if method == "GET" and len(parts) == 5 and parts[1:4] == ["v1", "house", "references"]:
-            names = {f['reference'].get('file') for f in house.registry().values()}
-            if parts[4] not in names or not parts[4]:
+            references = {f['reference']['file']: house.KIT / "references" / f['reference']['file']
+                          for f in house.registry().values() if f['reference'].get('file')}
+            ref = references.get(parts[4])
+            if ref is None:
                 raise FileNotFoundError("house reference not packaged (source rights/context required)")
-            ref = house.KIT / "references" / parts[4]
             return self.send_file(ref, "image/jpeg", hashlib.sha256(ref.read_bytes()).hexdigest())
         if len(parts) == 5 and parts[1:3] == ["v1", "projects"] and parts[4] in ("house-policy", "plan-visual", "generate-visual", "attach-visual"):
             store.project(parts[3])
-            folder = store.path(parts[3])
+            # project() rejects malformed identifiers first; basename is defense-in-depth, not token repair.
+            folder = store.path(os.path.basename(parts[3]))
             if method == "GET" and parts[4] == "house-policy":
                 return self.send(200, house.guide(folder))
             if method == "POST":

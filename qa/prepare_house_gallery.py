@@ -26,7 +26,7 @@ for name,times in refs.items():
     if not src.is_file():raise RuntimeError(f'Missing approved source {name}; do not synthesize a replacement')
     for t in times:
         dest=a.output/'raw-reference'/f'{src.stem}-{t}.jpg'
-        subprocess.run(['/usr/bin/ffmpeg','-v','error','-ss',str(t),'-i',str(src),'-frames:v','1','-q:v','2',str(dest)],check=True,timeout=30)
+        subprocess.run(['/usr/bin/ffmpeg','-y','-v','error','-ss',str(t),'-i',str(src),'-frames:v','1','-q:v','2',str(dest)],check=True,timeout=30)
         reference_rows.append({'source':name,'source_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),'seconds':t,'frame':str(dest.relative_to(a.output))})
 rows=[]
 for component in house.COMPONENTS:

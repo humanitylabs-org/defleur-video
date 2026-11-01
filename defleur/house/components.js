@@ -63,14 +63,18 @@
     },
     'source-frame'(b,p) {return text(540,280,b.labels[0],60)+`<rect x="140" y="${560+300*p}" width="800" height="65" fill="${C.gold}" opacity=".2"/>`+text(540,1170,b.attribution,36);}
   };
+  const assetURL=value=>{
+    if(typeof value!=='string'||!/^assets\/[a-z0-9][a-z0-9_-]*\.(?:png|jpe?g)$/i.test(value))throw new Error('House images must be local packaged assets');
+    return 'assets/'+encodeURIComponent(value.slice(7));
+  };
   const scenes=plan.beats.map(b=>{
     const el=document.createElement('section');el.className='house-scene'+(b.component==='image-beat'?' image':'');
     el.dataset.component=b.component;el.dataset.beat=b.id;
     if(b.component==='image-beat'){
-      const img=document.createElement('img');img.className='illustration';img.src=b.asset;img.alt='Generated conceptual illustration, not documentary evidence';el.append(img);
+      const img=document.createElement('img');img.className='illustration';img.src=assetURL(b.asset);img.alt='Generated conceptual illustration, not documentary evidence';el.append(img);
       const scrim=document.createElement('div');scrim.className='image-scrim';el.append(scrim);
     } else {
-      if(b.component==='source-frame'){const img=document.createElement('img');img.className='source';img.src=b.source_asset;img.alt=b.attribution;el.append(img);}
+      if(b.component==='source-frame'){const img=document.createElement('img');img.className='source';img.src=assetURL(b.source_asset);img.alt=b.attribution;el.append(img);}
       const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 1080 1920');el.append(svg);
     }
     root.append(el);return {b,el};

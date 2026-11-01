@@ -367,7 +367,7 @@ def attach_visual(project, beat_id, asset, model):
         raise Rejected('plan an eligible illustrative visual first')
     if asset != f'assets/{beat_id}.png':
         raise Rejected('attach the exact project-local upload path from plan_visual')
-    file = project / 'motion' / 'src' / asset
+    file = project / 'motion' / 'src' / 'assets' / (os.path.basename(beat_id) + '.png')
     if not file.is_file() or file.is_symlink():
         raise Rejected('upload the PNG with prepare_asset_upload first')
     data = file.read_bytes()
