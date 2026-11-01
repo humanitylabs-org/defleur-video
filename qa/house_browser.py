@@ -24,7 +24,7 @@ try:
                 errors=[]
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 page.goto(f'http://127.0.0.1:{server.server_port}/{case["path"]}',wait_until='networkidle')
-                page.evaluate('document.fonts.ready')
+                page.evaluate('async()=>{await window.houseFontsReady;await document.fonts.ready}')
                 page.wait_for_function('Array.from(document.images).every(i => i.complete && i.naturalWidth > 0)')
                 for t in case['times']:
                     page.evaluate('(t)=>window.renderFrame(t)',t)

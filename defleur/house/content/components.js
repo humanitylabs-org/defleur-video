@@ -102,5 +102,9 @@
   };
   window.visualMode=t=>plan.beats.some(b=>t>=b.start&&t<b.end)?'motion':'live';
   window.captionSuppressed=()=>false;
+  // Load house fonts eagerly: at t=0 no text is visible, so a lazy face would still be
+  // unloaded when capture awaits document.fonts.ready, and the first beat would render
+  // blank text (font-display:block) or a fallback face.
+  window.houseFontsReady=Promise.all(['52px Anton','600 52px Inter'].map(f=>document.fonts.load(f)));
   window.renderFrame(0);
 })();

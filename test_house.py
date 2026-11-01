@@ -213,3 +213,12 @@ class HouseTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main(verbosity=2)
+
+
+class HouseFontPreloadTest(unittest.TestCase):
+    def test_kit_loads_house_fonts_before_first_beat(self):
+        js = (Path(__file__).resolve().parent / 'defleur/house/content/components.js').read_text()
+        self.assertIn("document.fonts.load", js)
+        self.assertIn("52px Anton", js)
+        self.assertIn("600 52px Inter", js)
+        self.assertLess(js.index('houseFontsReady'), js.rindex('window.renderFrame(0)'))
