@@ -28,6 +28,15 @@ ID = re.compile(r'^[a-z][a-z0-9_-]{0,47}$')
 BEAT_META = ('spoken_anchor', 'viewer_inference', 'state_before', 'state_after', 'causal_action', 'speaker_return')
 
 
+def under(project, *parts):
+    """Confine every request-derived house path, including parent symlinks."""
+    base = os.path.realpath(project) + os.sep
+    target = os.path.realpath(os.path.join(base, *parts))
+    if not target.startswith(base):
+        raise Rejected('house path must stay inside this project')
+    return Path(target)
+
+
 def read(path, default=None):
     return json.loads(path.read_text()) if path.is_file() else copy.deepcopy(default)
 
@@ -176,10 +185,10 @@ def validate(plan, duration=None, project=None, configuration=None):
             if not isinstance(vid, str) or not ID.fullmatch(vid):
                 raise Rejected('image-beat requires an attached visual_id')
             if project:
-                attached = read(project / 'visuals' / f'{vid}.json')
+                attached = read(under(project, 'visuals', f'{vid}.json'))
                 if not attached or attached.get('state') != 'attached':
                     raise Rejected(f'image-beat {vid}: attach the generated PNG first')
-                path = project / 'motion' / 'src' / attached['asset']
+                path = under(project, 'motion', 'src', attached['asset'])
                 if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != attached['sha256']:
                     raise Rejected('attached visual bytes changed; reattach and re-prove')
             kinds.add('image')
@@ -278,14 +287,14 @@ def plan_visual(project, beat_id, family, subject):
              'generation_allowed': f['generation_allowed'],
              'upload': {'prepare_asset_upload': {'path': f'assets/{beat_id}.png'},
                         'attach_visual': {'beat_id': beat_id, 'model': MODEL, 'asset': f'assets/{beat_id}.png'}}}
-    write(project / 'visuals' / f'{beat_id}.json', state)
+    write(under(project, 'visuals', f'{beat_id}.json'), state)
     return state
 
 
 def generate_visual(project, beat_id):
     if not isinstance(beat_id, str) or not ID.fullmatch(beat_id):
         raise Rejected('invalid beat_id')
-    state = read(project / 'visuals' / f'{beat_id}.json')
+    state = read(under(project, 'visuals', f'{beat_id}.json'))
     if not state:
         raise Rejected('plan_visual first')
     if not state['generation_allowed']:
@@ -365,17 +374,17 @@ def attach_visual(project, beat_id, asset, model):
         raise Rejected(f'visual model pin is {MODEL}; no alternate model accepted')
     if not isinstance(beat_id, str) or not ID.fullmatch(beat_id):
         raise Rejected('invalid beat_id')
-    state = read(project / 'visuals' / f'{beat_id}.json')
+    state = read(under(project, 'visuals', f'{beat_id}.json'))
     if not state or not state['generation_allowed']:
         raise Rejected('plan an eligible illustrative visual first')
     if asset != f'assets/{beat_id}.png':
         raise Rejected('attach the exact project-local upload path from plan_visual')
-    file = project / 'motion' / 'src' / 'assets' / (os.path.basename(beat_id) + '.png')
+    file = under(project, 'motion', 'src', 'assets', beat_id + '.png')
     if not file.is_file() or file.is_symlink():
         raise Rejected('upload the PNG with prepare_asset_upload first')
     data = file.read_bytes()
     png_size(data)
     state.update(state='attached', asset=asset, sha256=hashlib.sha256(data).hexdigest(),
                  provenance='externally supplied; model is declared, not independently attested', declared_model=model)
-    write(project / 'visuals' / f'{beat_id}.json', state)
+    write(under(project, 'visuals', f'{beat_id}.json'), state)
     return state

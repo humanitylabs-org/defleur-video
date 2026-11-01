@@ -121,6 +121,15 @@ class HouseTests(unittest.TestCase):
         (self.root/'motion/src/house/components.js').write_text('window.renderFrame=()=>{}')
         with self.assertRaisesRegex(Rejected,'house kit or plan changed'):house.verify_submission(self.root,result['plan'],20)
 
+    def test_house_paths_reject_traversal_and_parent_symlinks(self):
+        self.assertEqual(house.under(self.root,'visuals','safe.json'),self.root/'visuals/safe.json')
+        with self.assertRaisesRegex(Rejected,'inside this project'):
+            house.under(self.root,'..','escape.json')
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as elsewhere:
+            (self.root/'visuals').symlink_to(elsewhere,target_is_directory=True)
+            with self.assertRaisesRegex(Rejected,'inside this project'):
+                house.under(self.root,'visuals','safe.json')
+
     def test_neutral_keeps_a_monochrome_typed_kit(self):
         p=house.set_policy(self.root,{'preset':'neutral','reason':'Explicit neutral project'})
         self.plan['beats'][0]['color']=p['default_color']
