@@ -1,0 +1,105 @@
+{
+  "boss-portrait": {
+    "name": "Boss portraits & synthwave posters",
+    "workflow": "Select a specific subject and attitude -> reference-guided monumental portrait/ensemble -> silhouette and identity QA -> typeset title separately -> bounded light/reveal choreography.",
+    "constraint": "Near-black ground, hard violet/cyan rim light, pixel texture; selectively, never a neon philosopher for every concept.",
+    "generation_allowed": true,
+    "reference": {
+      "inventory_index": 506,
+      "archive_file_id": "1a6iaPQuZs_UxeywkO799NNO15vE7SvYZ",
+      "title": "Socrates glitch",
+      "source_url": "https://drive.google.com/file/d/1a6iaPQuZs_UxeywkO799NNO15vE7SvYZ/view",
+      "file": "0506.jpg",
+      "sha256": "12a424b7893a09a269f5670b6c20afe8e0cb16f8be1e3859c4ec4c5621a53e44",
+      "rights": "Owner-provided archive artwork; reference only"
+    }
+  },
+  "cinematic-metaphor": {
+    "name": "Cinematic / mythic visual metaphors",
+    "workflow": "Literalize the relationship in one scene -> choose character action and focal point -> cinematic high-contrast art -> purposeful reveal at the spoken pivot.",
+    "constraint": "Concrete dramatic situation and opposing forces; avoid generic soft-painted sepia and arbitrary drift.",
+    "generation_allowed": true,
+    "reference": {
+      "inventory_index": 554,
+      "archive_file_id": "18S_snc7brOWDvhxsb8MDMgFNhm2RLcOe",
+      "title": "Kicked out of the tribe",
+      "source_url": "https://drive.google.com/file/d/18S_snc7brOWDvhxsb8MDMgFNhm2RLcOe/view",
+      "file": "0554.jpg",
+      "sha256": "59b1f8dec403ff0921e7e1842fac43fc20cdf95a48817a1bd4b0d8a1186a9d16",
+      "rights": "Owner-provided archive artwork; reference only"
+    }
+  },
+  "comic-satire": {
+    "name": "Comic / retro-ad satire",
+    "workflow": "Identify one comic contradiction -> storyboard punchline -> bold illustration without text -> typeset exact wording separately -> reveal at the joke/claim.",
+    "constraint": "Graphic silhouettes, halftone, oversized objects and an absurd physical metaphor.",
+    "generation_allowed": true,
+    "reference": {
+      "inventory_index": 633,
+      "archive_file_id": "1VVtVKdKs_ebGLRf9yZvEupEDO0k4WXvd",
+      "title": "hormesis man",
+      "source_url": "https://drive.google.com/file/d/1VVtVKdKs_ebGLRf9yZvEupEDO0k4WXvd/view",
+      "file": "0633.jpg",
+      "sha256": "aa2bf287af558c863c372bba271b4f0390fb61ec9ac998ee3ade76cddaa9b091",
+      "rights": "Owner-provided archive artwork; reference only"
+    }
+  },
+  "meme-remix": {
+    "name": "Meme & pop-culture remix",
+    "workflow": "Source recognizable original -> verify context and rights -> crop/composite and typeset -> reveal setup/payoff; generate only a missing transformation.",
+    "constraint": "A real original is required; recreated material must be distinguishable. Reference not redistributed because third-party rights are unconfirmed.",
+    "generation_allowed": false,
+    "reference": {
+      "inventory_index": 542,
+      "archive_file_id": "1xRo3_1ZIdhv6gnvDU6_PqjGt-SLCwDq1",
+      "title": "Free Thinker",
+      "source_url": "https://drive.google.com/file/d/1xRo3_1ZIdhv6gnvDU6_PqjGt-SLCwDq1/view",
+      "file": null,
+      "rights": "Not packaged; third-party rights/context must be checked"
+    }
+  },
+  "explanatory-mechanism": {
+    "name": "Explanatory diagrams & visual mechanisms",
+    "workflow": "Write causal relationship -> select component -> editable SVG/HTML -> map state changes to locked spoken words -> render and phone QA.",
+    "constraint": "Use Module B, not a raster-generated diagram; relationships must change and explain.",
+    "generation_allowed": false,
+    "reference": {
+      "inventory_index": 440,
+      "archive_file_id": "1Xa8enVs014Aqr7J_qGcFtFPNPG1dU5aM",
+      "title": "ai feedback loops",
+      "source_url": "https://drive.google.com/file/d/1Xa8enVs014Aqr7J_qGcFtFPNPG1dU5aM/view",
+      "file": "0440.jpg",
+      "sha256": "acf0ff60b16ac82647b1e4e8ac0a94595b65c82228c0a6f6e7079ab2501859b8",
+      "rights": "Owner-provided archive artwork; reference only"
+    }
+  },
+  "source-evidence": {
+    "name": "Receipts, quotations & documentary evidence",
+    "workflow": "Retrieve original -> verify quotation/numbers -> crop/highlight/reframe -> animate attention, never evidence.",
+    "constraint": "Authentic sources only. Never generate papers, charts, screenshots or quotes. Third-party source thumbnail is not redistributed.",
+    "generation_allowed": false,
+    "reference": {
+      "inventory_index": 569,
+      "archive_file_id": "1M9q3Rt5tPc565gZj1UP4GUepB--aaFQA",
+      "title": "Stanford Prison Experiment",
+      "source_url": "https://drive.google.com/file/d/1M9q3Rt5tPc565gZj1UP4GUepB--aaFQA/view",
+      "file": null,
+      "rights": "Not packaged; third-party rights/context must be checked"
+    }
+  },
+  "episode-identity": {
+    "name": "Episode identity & host composites",
+    "workflow": "Same-episode verified host stills -> established black/gold or neon composite treatment -> separate accurate typography -> restrained title/end transition.",
+    "constraint": "Identity is not explanatory B-roll. Do not generate host identities from a generic style reference.",
+    "generation_allowed": false,
+    "reference": {
+      "inventory_index": 539,
+      "archive_file_id": "1egFXt-VIIq2UR7AfeYgU5inKA5t8DoLd",
+      "title": "End Image Episode 4",
+      "source_url": "https://drive.google.com/file/d/1egFXt-VIIq2UR7AfeYgU5inKA5t8DoLd/view",
+      "file": "0539.jpg",
+      "sha256": "4cc76cb52edeafb6d8460a14b39b2f4b43e74686026731c49863d190877b7e00",
+      "rights": "Owner-provided archive artwork; reference only"
+    }
+  }
+}

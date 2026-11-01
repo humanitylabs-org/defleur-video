@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import hashlib
 import workflow
 import motion
+import house
 import errno
 import fcntl
 import hmac
@@ -1255,6 +1256,42 @@ class Handler(BaseHTTPRequestHandler):
                 raise Rejected("truncated JSON")
             value = parse_json(data)
             return self.send(202, store.submit_stage(parts[3], parts[5], value))
+        if method == "GET" and self.path == "/v1/house":
+            return self.send(200, house.guide())
+        if method == "GET" and len(parts) == 5 and parts[1:4] == ["v1", "house", "references"]:
+            names = {f['reference'].get('file') for f in house.registry().values()}
+            if parts[4] not in names or not parts[4]:
+                raise FileNotFoundError("house reference not packaged (source rights/context required)")
+            ref = house.KIT / "references" / parts[4]
+            return self.send_file(ref, "image/jpeg", hashlib.sha256(ref.read_bytes()).hexdigest())
+        if len(parts) == 5 and parts[1:3] == ["v1", "projects"] and parts[4] in ("house-policy", "plan-visual", "generate-visual", "attach-visual"):
+            store.project(parts[3])
+            folder = store.path(parts[3])
+            if method == "GET" and parts[4] == "house-policy":
+                return self.send(200, house.guide(folder))
+            if method == "POST":
+                if self.headers.get("Content-Type") != "application/json":
+                    raise Rejected("Content-Type must be application/json")
+                n = self.length(16000)
+                data = self.rfile.read(n)
+                if len(data) != n:
+                    raise Rejected("truncated JSON")
+                value = parse_json(data)
+                if not isinstance(value, dict):
+                    raise Rejected("house body must be an object")
+                with store.connect() as c:
+                    if c.execute("SELECT 1 FROM jobs WHERE project=? AND state IN ('queued','running')", (parts[3],)).fetchone():
+                        raise Rejected("wait for the running project job before changing its house policy or visuals")
+                op = parts[4]
+                if op == "house-policy":
+                    return self.send(200, house.set_policy(folder, value))
+                if op == "plan-visual" and set(value) == {"beat_id", "family", "subject"}:
+                    return self.send(201, house.plan_visual(folder, **value))
+                if op == "generate-visual" and set(value) == {"beat_id"}:
+                    return self.send(200, house.generate_visual(folder, **value))
+                if op == "attach-visual" and set(value) == {"beat_id", "asset", "model"}:
+                    return self.send(201, house.attach_visual(folder, **value))
+                raise Rejected("unexpected visual operation fields; use the app guide")
         if len(parts) == 5 and parts[1:3] == ["v1", "projects"] and parts[4] in ("motion", "asset-uploads"):
             store.project(parts[3])
             folder = store.path(parts[3])
@@ -1289,8 +1326,14 @@ class Handler(BaseHTTPRequestHandler):
                 with store.connect() as c:
                     if c.execute("SELECT 1 FROM jobs WHERE project=? AND state IN ('queued','running')", (parts[3],)).fetchone():
                         raise Rejected("a job is running for this project; wait before changing the motion composition")
-                # The edited duration is checked again at capture time against the locked timeline.
-                return self.send(201, motion.submit(folder, value.get("files", {}), value["plan"], None, bool(value.get("replace", True))))
+                # Native capture rechecks against the hash-locked edited duration.
+                files, plan = value.get("files", {}), value["plan"]
+                if house.policy(folder)['preset'] == 'james':
+                    if files:
+                        raise Rejected("James house look is app-owned: submit files={} and structured beats, not custom HTML/CSS/JS; select neutral explicitly for a custom composition")
+                    plan = house.validate(plan, project=folder)
+                    files, plan = house.compile_files(plan, folder), house.native_plan(plan)
+                return self.send(201, motion.submit(folder, files, plan, None, bool(value.get("replace", True))))
         if method == "GET" and self.path == "/v1/workflow/docs":
             return self.send(200, {"docs": sorted(workflow.DOCS)})
         if method == "GET" and len(parts) == 5 and parts[1:4] == ["v1", "workflow", "docs"]:

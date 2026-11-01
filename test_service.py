@@ -194,7 +194,7 @@ class MediaTests(unittest.TestCase):
             self.assertFalse(job["delivery_approved"])
         return job
 
-    def test_piece1_stages_over_http(self):
+    def test_module_a_end_to_end_no_motion_over_http(self):
         import workflow
         from client import Client
         client = Client(f"http://127.0.0.1:{self.server.server_port}", self.token)
@@ -989,6 +989,7 @@ class MediaTests(unittest.TestCase):
             os.chmod(media / "Videos", 0o755)
 
     def test_motion_submission_paths_plan_and_asset_upload(self):
+        # Legacy arbitrary HTML is intentionally retained only in an explicit neutral project.
         import motion
         import workflow
         status, project = self.request("POST", "/v1/projects", self.source.read_bytes(), "video/mp4")
@@ -999,6 +1000,8 @@ class MediaTests(unittest.TestCase):
         index = ('<img id="live"><script src="defleur/ledger.js"></script><script src="defleur/gsap.min.js"></script>'
                  '<script>window.renderFrame = (t) => {};</script>')
         post = lambda body: self.request("POST", f"/v1/projects/{pid}/motion", json.dumps(body).encode(), "application/json")
+        self.assertEqual(self.request("POST", f"/v1/projects/{pid}/house-policy",
+                         json.dumps({"preset": "neutral", "reason": "Legacy custom composition compatibility fixture"}).encode())[0], 200)
         good = {"files": {"index.html": index, "main.css": "body{margin:0}"}, "plan": {"beats": [beat]}}
         for bad_path in ("../x.html", "/etc/passwd", "defleur/ledger.js", "a/b/c/d/e.js", "x.exe", "Index.html", "locked-timeline.json"):
             status, err = post({**good, "files": {**good["files"], bad_path: "x"}})
@@ -1561,11 +1564,11 @@ print(json.dumps({
         self.assertEqual(r["spellings"], [True, True, True, False, False, False])
         self.assertEqual(r["intended"], {"harness": "Hermes Agent", "model": "Claude Opus 5.5", "model_id": "claude-opus-5-5"})
 
-    def test_guide_defaults_to_motion_with_one_combined_approval(self):
+    def test_guide_separates_modules_with_one_combined_visual_approval(self):
         g = self._mcp_py("print(json.dumps({'guide': mcp_server.GUIDE, 'instructions': mcp_server.mcp.instructions}))")
         steps, text = g["guide"]["steps"], json.dumps(g["guide"])
-        self.assertTrue(steps[0].startswith("0. Agent check"))
-        self.assertIn("ON by default", g["guide"]["default_edit"])
+        self.assertIn("no author-model warning", steps[0])
+        self.assertIn("Module A independently", g["guide"]["default_edit"])
         self.assertTrue(any("ONE approval question" in x and "motion plan" in x for x in steps))
         self.assertTrue(any("render_final(project_id, {'motion': true})" in x for x in steps))
         self.assertNotIn("Skip this for a plain captioned", text)
@@ -1703,9 +1706,75 @@ print(json.dumps([a, b, done]))
         self.assertTrue(r.getheader("Content-Type").startswith("text/markdown"))
         self.assertEqual(r.getheader("X-Content-SHA256"), hashlib.sha256(body.encode()).hexdigest())
         self.assertTrue(body.startswith("---\nname: defleur-video-editing\ndescription: "))
-        for must in ("Agent check", "requires_owner_confirmation", "One approval question", "words_lost_near_cuts",
-                     "asr_variance_far_from_cuts", "several frames", "beats_delivered", "{'motion': true}", "Hermes Agent with Claude Opus 5.5"):
+        for must in ("Conversation first", "Three separable modules", "ONE cut approval", "words_lost_near_cuts",
+                     "ASR", "several source/final frames", "gpt-image-2-high", "1080×1920", "Hermes Agent"):
             self.assertIn(must, body)
+
+    def test_module_a_mcp_has_no_creative_author_warning(self):
+        out = self._mcp_py("""
+mcp_server.api = lambda *a, **k: {'modules': {'edit': 'fixture'}}
+a=mcp_server.workflow_guide(None, agent_harness='Codex', agent_model='not-opus', module='edit')
+b=mcp_server.workflow_guide(None, agent_harness='Codex', agent_model='not-opus', module='motion')
+print(json.dumps([a,b]))
+""")
+        self.assertFalse(out[0]['agent_check']['requires_owner_confirmation'])
+        self.assertIsNone(out[0]['agent_check']['warning'])
+        self.assertTrue(out[1]['agent_check']['requires_owner_confirmation'])
+        self.assertNotIn('motion plan', json.dumps(out[0]['technical_workflow']))
+
+    def test_module_a_mcp_render_options_do_not_seek_motion_proof(self):
+        out=self._mcp_py("""
+def runs(project,kind=None,state=None):
+    if kind == 'apply_cuts':return [{'id':'cut', 'params':{'edit':{'language':'en'}}, 'result':{'jobs':{}}}]
+    return []
+mcp_server.runs_for=runs
+mcp_server.latest_proof=lambda *a,**k: (_ for _ in ()).throw(AssertionError('Module A must not request proof'))
+mcp_server.start_run=lambda *a,**k: {'id':'fixture-run'}
+mcp_server.base_url=lambda *a,**k: 'http://fixture.invalid'
+a=mcp_server.render_final('a'*32,None,{'motion':False})
+b=mcp_server.render_final('a'*32,None,{'style':'captions'})
+print(json.dumps([a,b]))
+""")
+        for result in out:
+            self.assertFalse(result['motion'])
+            self.assertIn('Module A',result['plain_note'])
+            self.assertNotIn('why this one is plain',result['plain_note'])
+
+    def test_house_http_kit_validation_and_visual_plan(self):
+        from test_house import beat
+        status,p=self.request('POST','/v1/projects',self.source.read_bytes(),'video/mp4')
+        self.assertEqual(status,201)
+        pid=p['id']
+        try:
+            status,guide=self.request('GET','/v1/house')
+            self.assertEqual(status,200)
+            self.assertEqual(len(guide['families']),7)
+            self.assertEqual(guide['policy']['preset'],'james')
+            body={'files':{'index.html':'window.renderFrame=()=>{}'},'plan':{'duration':20,'beats':[beat()]}}
+            status,error=self.request('POST',f'/v1/projects/{pid}/motion',json.dumps(body).encode())
+            self.assertEqual(status,422)
+            self.assertIn('app-owned',error['error'])
+            body['files']={}
+            status,result=self.request('POST',f'/v1/projects/{pid}/motion',json.dumps(body).encode())
+            self.assertEqual(status,201,result)
+            self.assertIn('house_spec',result['plan'])
+            body['plan']['beats'][0]['color']='#00ff00'
+            status,error=self.request('POST',f'/v1/projects/{pid}/motion',json.dumps(body).encode())
+            self.assertEqual(status,422)
+            self.assertIn('palette',error['error'])
+            value={'beat_id':'art','family':'cinematic-metaphor','subject':'Test fixture, not owner creative content'}
+            status,planned=self.request('POST',f'/v1/projects/{pid}/plan-visual',json.dumps(value).encode())
+            self.assertEqual(status,201)
+            self.assertEqual(planned['model'],'gpt-image-2-high')
+            status,ref=self.request('GET',planned['reference_url'])
+            self.assertEqual(status,200)
+            self.assertEqual(hashlib.sha256(ref).hexdigest(),planned['reference']['sha256'])
+            value={'beat_id':'art','asset':'assets/art.png','model':'other'}
+            status,error=self.request('POST',f'/v1/projects/{pid}/attach-visual',json.dumps(value).encode())
+            self.assertEqual(status,422)
+            self.assertIn('model pin',error['error'])
+        finally:
+            self.request('DELETE',f'/v1/projects/{pid}')
 
     def test_proxy_remembers_mcp_client_info(self):
         init = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {

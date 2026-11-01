@@ -1,0 +1,118 @@
+{
+  "source": "Unchanged historical manifest packaged alongside this port; this is a typed component policy regression, not a claim of pixel-identical reapproval.",
+  "original_plan_sha256": "b40039033ca987b9c657c6acac53d8e2f7fa6207add0ad25c9ab18cc3898faef",
+  "historical_project_policy": {
+    "mix_required": false,
+    "reason": "Historical approved motion-only reference; owner/project exception, not default policy change."
+  },
+  "plan": {
+    "duration": 75.89,
+    "beats": [
+      {
+        "start": 3.45,
+        "end": 7.95,
+        "spoken_anchor": "...thinking that they will live forever, like, yeah, I don't think that's psychologically healthy",
+        "viewer_inference": "Believing you will never reach the end of your life is the delusion he is warning about.",
+        "state_before": "A finite lifeline from BIRTH to an END marker under the word LIFESPAN.",
+        "state_after": "The END marker is gone, the line runs off the edge under a gold infinity sign, which turns red under a NOT HEALTHY stamp.",
+        "causal_action": "On 'forever' the END marker is pushed off the canvas, the line stretches past the edge and the infinity sign draws itself; on 'psychologically healthy' the infinity turns red and the verdict stamp lands.",
+        "speaker_return": "Back on the speaker at 7.95 s for 'and I think that will have negative consequences on society'.",
+        "id": "beat-1",
+        "component": "lifeline",
+        "labels": [
+          "LIFESPAN",
+          "BIRTH",
+          "NOT HEALTHY"
+        ],
+        "font": "Anton",
+        "color": "#e9b45c",
+        "phases": [
+          {
+            "at": 3.96,
+            "word": "forever",
+            "action": "transform"
+          }
+        ]
+      },
+      {
+        "start": 15.85,
+        "end": 27.45,
+        "spoken_anchor": "if every year of your immortal life looks like the current one, same meals, bed at 8:30, no exceptions. Is that really living or is it more of a sentence?",
+        "viewer_inference": "An endless life of identical years is not more life; it is a prison term.",
+        "state_before": "One year: a plate and an 8:30 clock in a cell, header YEAR 1.",
+        "state_after": "Sixteen identical years behind steel bars under the header A SENTENCE.",
+        "causal_action": "The year copies itself while the counter runs to YEAR 10,000+; on 'same meals' every plate lights, on 'bed at 8:30' every clock lights, on 'no exceptions' the habits merge into 0 EXCEPTIONS and all the years pulse in sync; 'really living?' replaces the counter, and on 'sentence' bars drop over the grid.",
+        "speaker_return": "Back to the conversation at 27.45 s for 'you've self-sentenced yourself to this, let's say jail to live forever'.",
+        "id": "beat-2",
+        "component": "routine-grid",
+        "labels": [
+          "YEAR 1",
+          "A SENTENCE"
+        ],
+        "font": "Anton",
+        "color": "#e9b45c",
+        "phases": [
+          {
+            "at": 26.18,
+            "word": "sentence",
+            "action": "transform"
+          }
+        ]
+      },
+      {
+        "start": 35.7,
+        "end": 41.8,
+        "spoken_anchor": "the main purpose of life, which is experience, love, integration, chaos and being able to kind of synthesize all that",
+        "viewer_inference": "The alternative to the rigid routine is many different things held together.",
+        "state_before": "The steel bars from the sentence image, under the header PURPOSE OF LIFE.",
+        "state_after": "Four separate qualities joined into one woven web around a bright centre.",
+        "causal_action": "The bars lift away on 'experience'; EXPERIENCE, LOVE, INTEGRATION and CHAOS appear on their words; on 'synthesize' each is drawn into a common centre and then tied to its neighbours.",
+        "speaker_return": "Back to the conversation at 41.8 s for 'and be okay with uncertainty and thrive in those environments'.",
+        "id": "beat-3",
+        "component": "population",
+        "labels": [
+          "PURPOSE OF LIFE",
+          "EXPERIENCE",
+          "LOVE",
+          "INTEGRATION",
+          "CHAOS"
+        ],
+        "font": "Anton",
+        "color": "#e9b45c",
+        "phases": [
+          {
+            "at": 40,
+            "word": "synthesize",
+            "action": "transform"
+          }
+        ]
+      },
+      {
+        "start": 66.0,
+        "end": 74.2,
+        "spoken_anchor": "you're trying to maximize the overall average quality of your existence and your experience times the amount of time you live",
+        "viewer_inference": "Aliveness is an area, quality times time, not the length of a line of seconds.",
+        "state_before": "A thin line along the TIME axis labelled SECONDS EXISTING, header SECONDS.",
+        "state_after": "A tall filled area named ALIVENESS under the header QUALITY x TIME.",
+        "causal_action": "On 'overall average quality' the line of seconds grows upward along a QUALITY axis into an area; on 'existence and your experience' the area fills with lived moments; on 'times' the header becomes QUALITY x TIME and the area is named ALIVENESS.",
+        "speaker_return": "Back on the speaker at 74.2 s to close on his face: 'the amount of time you live'.",
+        "id": "beat-4",
+        "component": "quality-area",
+        "labels": [
+          "SECONDS",
+          "QUALITY x TIME",
+          "ALIVENESS"
+        ],
+        "font": "Anton",
+        "color": "#e9b45c",
+        "phases": [
+          {
+            "at": 70,
+            "word": "quality",
+            "action": "transform"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+@font-face { font-family: "Anton"; src: url("fonts/anton.woff2") format("woff2"); font-weight: 400; font-display: block; }
+@font-face { font-family: "InterB"; src: url("fonts/inter-600.woff2") format("woff2"); font-weight: 600; font-display: block; }
+
+html, body { margin: 0; padding: 0; width: 1080px; height: 1920px; overflow: hidden; background: #000; }
+#live { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; display: block; }
+
+/* Each beat owns the full canvas: near-black wedge foam with a warm practical glow,
+   matching the studio behind the speaker. */
+.scene {
+  position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; overflow: hidden;
+  visibility: hidden; opacity: 0;
+  background-color: #08080a;
+  background-image:
+    radial-gradient(ellipse 980px 1180px at 46% 36%, rgba(78, 56, 36, 0.58) 0%, rgba(24, 19, 16, 0.42) 55%, rgba(0, 0, 0, 0) 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.55) 100%),
+    url("assets/wedge.svg");
+  background-size: 1080px 1920px, 1080px 1920px, 96px 96px;
+}
+.scene svg.art { position: absolute; left: 0; top: 0; width: 1080px; height: 1920px; overflow: visible; }
+.anton { font-family: "Anton", sans-serif; text-transform: uppercase; }
+.inter { font-family: "InterB", sans-serif; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; }

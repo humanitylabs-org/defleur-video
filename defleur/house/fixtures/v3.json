@@ -1,0 +1,71 @@
+{
+  "source": "Unchanged historical manifest packaged alongside this port; this is a typed component policy regression, not a claim of pixel-identical reapproval.",
+  "original_plan_sha256": "551f9863a98af64efda84da637daec1980872c028019834611d8b05b44d1ef36",
+  "historical_project_policy": {
+    "mix_required": false,
+    "reason": "Historical v3 predates early visual v3.1 and image-mix activation. Original source insert stays in the unchanged historical manifest, not fabricated into this typed mechanism port.",
+    "first_visual_window": [
+      14.565,
+      14.565
+    ]
+  },
+  "plan": {
+    "duration": 37.225,
+    "beats": [
+      {
+        "start": 14.565,
+        "end": 18.765,
+        "spoken_anchor": "push back on it, ask follow-up questions, do inversion",
+        "viewer_inference": "Three concrete things to do with an AI answer, so the advice is understood at a glance.",
+        "state_before": "A confident AI ANSWER card with a gold check mark.",
+        "state_after": "Three stacked moves (1 PUSH BACK, 2 FOLLOW UP, 3 INVERT); the check has become a red '?' and the card is turned upside down.",
+        "causal_action": "Each move arrives on its spoken word: on 'push back' the check turns into a question, 'follow-up' adds the second move, on 'inversion' the answer card is flipped over.",
+        "speaker_return": "Back to the conversation at 18.765 s for 'be like, oh, but what about this?'.",
+        "id": "beat-1",
+        "component": "stacked-moves",
+        "labels": [
+          "AI ANSWER",
+          "PUSH BACK",
+          "FOLLOW UP",
+          "INVERT"
+        ],
+        "font": "Anton",
+        "color": "#e9b45c",
+        "phases": [
+          {
+            "at": 14.64,
+            "word": "push",
+            "action": "transform"
+          }
+        ]
+      },
+      {
+        "start": 31.93,
+        "end": 35.0,
+        "spoken_anchor": "always hold a healthy level of skepticism",
+        "viewer_inference": "The takeaway is balance: neither trust everything nor doubt everything.",
+        "state_before": "A skepticism meter with its needle at TRUST ALL.",
+        "state_after": "The needle rests on the gold HEALTHY zone.",
+        "causal_action": "On 'always hold' the needle swings past TRUST ALL toward DOUBT ALL, then settles on HEALTHY as he says 'healthy level of skepticism'.",
+        "speaker_return": "Back on the speaker at 35.0 s for 'no matter what information you're taking in' to close on his face.",
+        "id": "beat-2",
+        "component": "meter",
+        "labels": [
+          "SKEPTICISM",
+          "TRUST ALL",
+          "DOUBT ALL",
+          "HEALTHY"
+        ],
+        "font": "Anton",
+        "color": "#e9b45c",
+        "phases": [
+          {
+            "at": 33.16,
+            "word": "healthy",
+            "action": "transform"
+          }
+        ]
+      }
+    ]
+  }
+}
