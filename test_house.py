@@ -121,6 +121,17 @@ class HouseTests(unittest.TestCase):
         (self.root/'motion/src/house/components.js').write_text('window.renderFrame=()=>{}')
         with self.assertRaisesRegex(Rejected,'house kit or plan changed'):house.verify_submission(self.root,result['plan'],20)
 
+    def test_neutral_keeps_a_monochrome_typed_kit(self):
+        p=house.set_policy(self.root,{'preset':'neutral','reason':'Explicit neutral project'})
+        self.plan['beats'][0]['color']=p['default_color']
+        configuration={**house.policy(),**p,'preset':'james'}
+        validated=house.validate(self.plan,project=self.root,configuration=configuration)
+        files=house.compile_files(validated,self.root)
+        self.assertIn('"neutral": true',files['index.html'])
+        self.assertIn('--house-gold:#f3ece2',files['house/house.css'])
+        self.assertIn('plan.neutral ?',files['house/components.js'])
+        self.assertIn('house/anton.woff2',files)
+
     def test_neutral_explicit_and_reason_required(self):
         self.assertEqual(house.policy(self.root)['preset'],'james')
         with self.assertRaises(Rejected):house.set_policy(self.root,{'preset':'neutral'})

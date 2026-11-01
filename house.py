@@ -209,6 +209,7 @@ def compile_files(plan, project=None):
             b['asset'] = read(project / 'visuals' / f'{b["visual_id"]}.json')['asset']
     # Neutral kit still available as assets; custom neutral files use the legacy path.
     data['palette'] = p['palette']
+    data['neutral'] = p['preset'] == 'neutral'
     body = json.dumps(data, ensure_ascii=True).replace('<', '\\u003c')
     files = {'index.html': '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="house/house.css">'
              '<img id="live" alt=""><main id="house"></main>'
@@ -217,6 +218,8 @@ def compile_files(plan, project=None):
              '<script src="house/components.js"></script>',
              'house/house.css': (KIT / 'content' / 'house.css').read_text(),
              'house/components.js': (KIT / 'content' / 'components.js').read_text()}
+    if p['preset'] == 'neutral':
+        files['house/house.css'] += '\n' + (KIT / 'content' / 'neutral.css').read_text()
     import base64
     for name in ('anton.woff2', 'inter-600.woff2'):
         files[f'house/{name}'] = {'base64': base64.b64encode((KIT / name).read_bytes()).decode()}

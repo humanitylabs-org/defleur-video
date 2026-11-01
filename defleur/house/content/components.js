@@ -5,7 +5,7 @@
   'use strict';
   const plan = JSON.parse(document.querySelector('#house-plan').textContent);
   const root = document.querySelector('#house');
-  const C = {white:'#f3ece2',gold:'#e9b45c',red:'#e5533d',dim:'#6b6258',blue:'#8fb0de'};
+  const C = plan.neutral ? {white:'#f3ece2',gold:'#f3ece2',red:'#6b6258',dim:'#6b6258',blue:'#f3ece2'} : {white:'#f3ece2',gold:'#e9b45c',red:'#e5533d',dim:'#6b6258',blue:'#8fb0de'};
   const clamp = n => Math.max(0, Math.min(1, n));
   const ease = n => { n = clamp(n); return n*n*(3-2*n); };
   const safe = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

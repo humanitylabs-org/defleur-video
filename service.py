@@ -1332,10 +1332,13 @@ class Handler(BaseHTTPRequestHandler):
                         raise Rejected("a job is running for this project; wait before changing the motion composition")
                 # Native capture rechecks against the hash-locked edited duration.
                 files, plan = value.get("files", {}), value["plan"]
-                if house.policy(folder)['preset'] == 'james':
+                policy = house.policy(folder)
+                if policy['preset'] == 'james' or not files:
                     if files:
                         raise Rejected("James house look is app-owned: submit files={} and structured beats, not custom HTML/CSS/JS; select neutral explicitly for a custom composition")
-                    plan = house.validate(plan, project=folder)
+                    # Neutral can use the same typed kit in monochrome, or supply explicit custom files.
+                    configuration = {**house.policy(), **policy, 'preset': 'james'} if policy['preset'] == 'neutral' else None
+                    plan = house.validate(plan, project=folder, configuration=configuration)
                     files, plan = house.compile_files(plan, folder), house.native_plan(plan)
                 return self.send(201, motion.submit(folder, files, plan, None, bool(value.get("replace", True))))
         if method == "GET" and self.path == "/v1/workflow/docs":
