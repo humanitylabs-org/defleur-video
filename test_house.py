@@ -125,6 +125,9 @@ class HouseTests(unittest.TestCase):
         self.assertEqual(house.under(self.root,'visuals','safe.json'),self.root/'visuals/safe.json')
         with self.assertRaisesRegex(Rejected,'inside this project'):
             house.under(self.root,'..','escape.json')
+        invalid={'duration':20,'beats':[{**beat('image-beat'),'visual_id':'../../escape'}]}
+        with self.assertRaisesRegex(Rejected,'inside this project'):
+            house.compile_files(invalid,self.root)
         with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as elsewhere:
             (self.root/'visuals').symlink_to(elsewhere,target_is_directory=True)
             with self.assertRaisesRegex(Rejected,'inside this project'):

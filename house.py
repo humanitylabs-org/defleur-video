@@ -215,7 +215,10 @@ def compile_files(plan, project=None):
     data = copy.deepcopy(plan)
     for b in data['beats']:
         if b['component'] == 'image-beat' and project:
-            b['asset'] = read(project / 'visuals' / f'{b["visual_id"]}.json')['asset']
+            visual = read(under(project, 'visuals', f'{b["visual_id"]}.json'))
+            if not visual or visual.get('state') != 'attached':
+                raise Rejected('attach the generated PNG before compiling image-beat')
+            b['asset'] = visual['asset']
     # Neutral kit still available as assets; custom neutral files use the legacy path.
     data['palette'] = p['palette']
     data['neutral'] = p['preset'] == 'neutral'
