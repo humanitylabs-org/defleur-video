@@ -1290,11 +1290,11 @@ class Handler(BaseHTTPRequestHandler):
                 if op == "house-policy":
                     return self.send(200, house.set_policy(folder, value))
                 if op == "plan-visual" and set(value) == {"beat_id", "family", "subject"}:
-                    return self.send(201, house.plan_visual(folder, **value))
+                    return self.send(201, house.plan_visual(folder, value['beat_id'], value['family'], value['subject']))
                 if op == "generate-visual" and set(value) == {"beat_id"}:
-                    return self.send(200, house.generate_visual(folder, **value))
+                    return self.send(200, house.generate_visual(folder, value['beat_id']))
                 if op == "attach-visual" and set(value) == {"beat_id", "asset", "model"}:
-                    return self.send(201, house.attach_visual(folder, **value))
+                    return self.send(201, house.attach_visual(folder, value['beat_id'], value['asset'], value['model']))
                 raise Rejected("unexpected visual operation fields; use the app guide")
         if len(parts) == 5 and parts[1:3] == ["v1", "projects"] and parts[4] in ("motion", "asset-uploads"):
             store.project(parts[3])
