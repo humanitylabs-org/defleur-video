@@ -38,7 +38,14 @@ async function connectBrowser(puppeteer) {
   const port = Number(target.port || 80);
   // Chrome only answers DevTools HTTP for an IP or localhost Host header: resolve the service name first.
   const {address} = await dns.promises.lookup(target.hostname, {family: 4});
-  const browser = await puppeteer.connect({browserURL: `http://${address}:${port}`, protocolTimeout: 180000});
+  // The app's Browser grant key (X-Wizard-Grant) on the DevTools discovery and the CDP WebSocket, when it has one.
+  const grant = process.env.BROWSER_GRANT || '';
+  let browser;
+  if (grant) {
+    const headers = {'X-Wizard-Grant': grant};
+    const version = await (await fetch(`http://${address}:${port}/json/version`, {headers, redirect: 'error'})).json();
+    browser = await puppeteer.connect({browserWSEndpoint: version.webSocketDebuggerUrl, headers, protocolTimeout: 180000});
+  } else browser = await puppeteer.connect({browserURL: `http://${address}:${port}`, protocolTimeout: 180000});
   // Local address of the interface that reaches the browser: the only address the project server binds.
   const local = await new Promise((resolve, reject) => { const socket = net.connect(port, address, () => { resolve(socket.localAddress); socket.destroy(); }); socket.on('error', reject); });
   return {browser, local};

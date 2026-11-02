@@ -14,6 +14,7 @@ import time
 import uuid
 from urllib.parse import quote, urlsplit
 
+import app_grants
 from editing import Rejected
 
 DEFAULT_URL = "http://transcriber:8000"
@@ -32,6 +33,9 @@ def config():
     return parsed, model, os.environ.get("TRANSCRIBER_API_KEY", "")
 
 
+GRANT_TARGETS = ("transcriber", "slot:transcription", "slot:speech-to-text-engine")
+
+
 def _request(parsed, key, method, path, body=None, headers=None, timeout=30):
     cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
     base = parsed.path.rstrip("/")
@@ -40,6 +44,10 @@ def _request(parsed, key, method, path, body=None, headers=None, timeout=30):
         h = dict(headers or {})
         if key:
             h["Authorization"] = "Bearer " + key
+        # The App Manager grant key (uses: transcriber), only to the Transcriber's own endpoint (wizard-os issue 386).
+        grant = app_grants.key_for(parsed.geturl(), GRANT_TARGETS, DEFAULT_URL)
+        if grant:
+            h["X-Wizard-Grant"] = grant
         c.request(method, base + path, body=body, headers=h)
         r = c.getresponse()
         data = r.read(64 * 1024 * 1024 + 1)
