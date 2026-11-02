@@ -19,9 +19,11 @@ Adaptation of capture.cjs (0.6.0)
 The app ships James' skills/defleur-motion/scripts/capture.cjs unchanged
 (sha256 e09fc4625000dbde832900ef0b94c45a2fbbe56a22a97436f93f6a05e4a86b89) and
 runs a minimally adapted copy, capture/capture-remote.cjs (sha256
-d8d8e62b0bc490d59c1112673fdcd1e0e87d1d1d311b41ff104e16819ab9d2ce), installed at /opt/capture. The full unified diff is
-capture/capture-remote.diff (sha256 852d142506f6238a97d84f2605de768de6f9af0b768303797ec2971e4307b3b3). The
+144913f806d5843b6926ac3ee889708ad9f48911ff291b9cb825840e9b7cb409), installed at /opt/capture. The full unified diff is
+capture/capture-remote.diff (sha256 59e11e9321a27828ec55fc6a77557b7c55b9ad93476543789002b7a9ab097207). The
 author authorized small documented adaptations. Changes, and nothing else:
+- with the app's Browser grant key (BROWSER_GRANT, from its App Manager grants file), the DevTools discovery
+  and the CDP WebSocket carry it as X-Wizard-Grant (wizard-os issue 386); without one, unchanged;
 - puppeteer.connect to the shared Browser app at BROWSER_URL (default
   http://browser:9222; the name is resolved to an IP because Chrome rejects
   non-IP Host headers) instead of puppeteer.launch of a local Chromium; the page

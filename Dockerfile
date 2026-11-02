@@ -46,7 +46,7 @@ LABEL org.opencontainers.image.source="https://github.com/humanitylabs-org/defle
 COPY defleur/ /opt/defleur/
 COPY NOTICE /opt/defleur/NOTICE
 WORKDIR /app
-COPY service.py editing.py client.py workflow.py transcriber.py scan_windows.py energy.py face_audit.py final_render.py motion.py motion_frames.py mcp_server.py /app/
+COPY service.py editing.py client.py workflow.py transcriber.py app_grants.py scan_windows.py energy.py face_audit.py final_render.py motion.py motion_frames.py mcp_server.py /app/
 # Agent-facing editing judgment (Agent Skills format), served at GET /SKILL.md and as an MCP resource.
 COPY SKILL.md /app/
 RUN /opt/venv/bin/python -I /opt/defleur/skills/defleur-audio/scripts/test_audio_gate.py

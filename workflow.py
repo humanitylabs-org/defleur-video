@@ -33,7 +33,7 @@ CANVAS = (1080, 1920)
 CAPTURE_DIR = Path(os.environ.get("VIDEO_CAPTURE_DIR") or ("/opt/capture" if Path("/opt/capture").is_dir() else APP_ROOT / "capture"))
 CAPTURE_SCRIPT = CAPTURE_DIR / "capture-remote.cjs"
 GSAP = CAPTURE_DIR / "node_modules" / "gsap" / "dist" / "gsap.min.js"
-CAPTURE_ADAPTED_SHA256 = "d8d8e62b0bc490d59c1112673fdcd1e0e87d1d1d311b41ff104e16819ab9d2ce"  # NOTICE: diff of James' capture.cjs
+CAPTURE_ADAPTED_SHA256 = "144913f806d5843b6926ac3ee889708ad9f48911ff291b9cb825840e9b7cb409"  # NOTICE: diff of James' capture.cjs
 NODE = os.environ.get("VIDEO_NODE", "/usr/bin/node")
 DEFAULT_BROWSER_URL = "http://browser:9222"
 MAX_OUTPUT_S = float(os.environ.get("VIDEO_MAX_OUTPUT_S", "360"))
@@ -187,6 +187,13 @@ def browser_url():
     return f"http://{p.hostname}:{p.port or 80}"
 
 
+def browser_grant(url):
+    """This app's Browser grant key (uses: browser), only for the Browser app's own endpoint (wizard-os issue 386:
+    with the boundary on, Browser's DevTools answer only granted apps)."""
+    import app_grants
+    return app_grants.key_for(url, ("browser", "slot:browser"), DEFAULT_BROWSER_URL)
+
+
 def browser_status(timeout=4):
     """Is the shared Browser app reachable? (Chrome needs an IP Host header, so resolve first.)"""
     import socket
@@ -199,7 +206,9 @@ def browser_status(timeout=4):
     p = urlsplit(url)
     try:
         ip = socket.getaddrinfo(p.hostname, p.port, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
-        with urllib.request.urlopen(f"http://{ip}:{p.port}/json/version", timeout=timeout) as r:
+        grant = browser_grant(url)
+        req = urllib.request.Request(f"http://{ip}:{p.port}/json/version", headers={"X-Wizard-Grant": grant} if grant else {})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             v = json.loads(r.read())
         return {"reachable": True, "url": url, "browser": v.get("Browser"), "protocol": v.get("Protocol-Version")}
     except Exception as e:  # noqa: BLE001 - report any failure plainly
@@ -1112,7 +1121,8 @@ def _capture(ctx, work, mode):
     ctx.used["capture-remote.cjs (James' capture.cjs adapted for the Browser app; see NOTICE)"] = CAPTURE_ADAPTED_SHA256
     started = time.monotonic()
     code, out, err = ctx.native([NODE, CAPTURE_SCRIPT, work, mode], timeout=deadline_for("final-render"), cwd=work, check=False,
-                                env_extra={**ctx.env(), "BROWSER_URL": url, "NODE_PATH": str(CAPTURE_DIR / "node_modules"),
+                                env_extra={**ctx.env(), "BROWSER_URL": url, "BROWSER_GRANT": browser_grant(url),
+                                           "NODE_PATH": str(CAPTURE_DIR / "node_modules"),
                                            "NODE_OPTIONS": "--max-old-space-size=2048"},
                                 cpu=36000, as_limit=64 * 1024**3, nofile=1024, file_limit=256 * 1024**2, max_log=1024 * 1024,
                                 threads="2", explain=True)
