@@ -5,7 +5,7 @@ name: DeFleur Video
 type: service
 category: app
 tags: [video]
-version: 0.7.1
+version: 0.7.2
 summary: "James' vertical-video workflow. It cuts, crops, adds motion graphics and captions."
 icon: icon.png
 license: MIT
@@ -27,6 +27,9 @@ system: false
 uses: [transcriber, browser, files]
 needs: [files]
 health: /healthz
+switches:
+  contract: wizard.app-switches/1
+  path: /api/switches
 ---
 
 # DeFleur Video
