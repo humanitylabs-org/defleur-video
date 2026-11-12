@@ -3,7 +3,7 @@ FROM ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb
 
 # Node runtime + exact-pinned puppeteer-core and GSAP (package-lock.json) for James' capture.cjs. No browser here:
 # capture connects to the shared Browser app.
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS capture
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS capture
 WORKDIR /opt/capture
 COPY capture/package.json capture/package-lock.json /opt/capture/
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && rm -rf /root/.npm \
