@@ -1,8 +1,19 @@
 > **Wizard OS app.** This repo is DeFleur Video as a standalone Wizard app: `wizard.md` at the root, stock Runtipi files in `runtipi/`, the MCP server in `mcp_server.py`, and the agent skill in `SKILL.md`. It was split out of `humanitylabs-org/wizard-app-store` with full history on 9 Oct 2026. Install it with `wam install defleur-video` ([wizard-app-manager](https://github.com/humanitylabs-org/wizard-app-manager)). **Owner: James DeFleur (with Archimedes).** This repo is the source of truth for the pipeline: changes merge here, and every push to `main` builds, tests and publishes the image the Runtipi recipe installs.
 
-# DeFleur Video API (0.4.0-testing)
+# DeFleur Video API
 
-HTTP service that runs the audio/edit half (piece 1 of 3) of James DeFleur's DeFleur Video workflow. James' plugin files ship unchanged in `defleur/` (installed at `/opt/defleur`; upstream commit `30768288eb1308b18216a5df5eb4648fbce3e55b`, MIT per plugin.json, redistributed with the author's authorization; see [NOTICE](NOTICE)). Hermes or any HTTP client is the editor; the service never calls an LLM. Speech-to-text comes from the separate **Transcriber** store app (`TRANSCRIBER_URL`, default `http://transcriber:8000`); word alignment runs locally with stable-ts on CPU.
+## App-owned Conversation first v3.1 (preview branch)
+
+Three independent modules: **A** cuts + house captions + fixed crop; **B** typed house-look motion; **C** archive-grounded visual planning, pinned `gpt-image-2-high` prompt/upload/attachment. Start with `workflow_guide(module="edit")` for the no-motion path, or `house_guide()` for the full shipped contract. Creative authorship checks do not apply to Module A.
+
+[The active app-owned instructions](defleur/house/INSTRUCTIONS.md) cover seven visual families, the 3–5-second entrance, majority-clean conversation and Image → mechanism → image mix. James plans compile the shipped kit and reject arbitrary caller HTML; explicit, reasoned neutral/project overrides preserve custom composition compatibility. Numerical policy and provenance live in `defleur/defaults/james-preset.json`.
+
+Image generation never changes provider/model. Missing app grant or unsupported image transport returns an exact blocker plus the app-built prompt/reference/upload steps. This branch does **not** claim the current text-only router can produce image binaries. Externally attached model declarations are recorded as declarations, not provider attestation.
+
+Preview verification: `qa/run_forum.py` builds a pushed SHA, runs the native HTTP/FFmpeg suite and policy tests, then captures kit screenshots and real approved reference frames on the Linux worker. Its archival gallery art is not new generation evidence. No production install/promotion is implied.
+
+
+HTTP service that runs the audio/edit half (piece 1 of 3) of James DeFleur's DeFleur Video workflow. James' original technical helper scripts ship unchanged in `defleur/skills/`; app-owned presets and the new `defleur/house/` kit are maintained here. The helpers are installed at `/opt/defleur` ( upstream commit `30768288eb1308b18216a5df5eb4648fbce3e55b`, MIT per plugin.json, redistributed with the author's authorization; see [NOTICE](NOTICE)). Hermes or any HTTP client is the editor; the service never calls an LLM. Speech-to-text comes from the separate **Transcriber** store app (`TRANSCRIBER_URL`, default `http://transcriber:8000`); word alignment runs locally with stable-ts on CPU.
 
 - Operator guide: [HERMES.md](HERMES.md). Stage map and measurements: [WORKFLOW-PARITY.md](WORKFLOW-PARITY.md). Release record: [RELEASE.md](RELEASE.md). The older 9:16 preview: [EDITING.md](EDITING.md).
 - James' SKILL.md files and references are served read-only at `GET /v1/workflow/docs` and `GET /v1/workflow/docs/{name}` (`client.py docs`).

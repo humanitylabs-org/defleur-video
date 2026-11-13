@@ -126,7 +126,7 @@ def caption_policy_violations(plan: dict, caption_style: dict) -> list[str]:
 
 def validate_plan(plan, duration: float | None, files: set[str]) -> dict:
     """James' visual-plan.json shape plus the app's 'inserts' (fullscreen B-roll windows through #live)."""
-    if not isinstance(plan, dict) or set(plan) - {"beats", "caption_suppress", "caption_emphasis", "inserts", "notes"}:
+    if not isinstance(plan, dict) or set(plan) - {"beats", "caption_suppress", "caption_emphasis", "inserts", "notes", "house_spec"}:
         raise Rejected("plan must be an object with beats, optional caption_suppress, caption_emphasis, inserts, notes")
     beats = plan.get("beats")
     if not isinstance(beats, list) or not 1 <= len(beats) <= 200:

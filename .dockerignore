@@ -13,6 +13,7 @@
 !final_render.py
 !motion.py
 !motion_frames.py
+!house.py
 !capture/package.json
 !capture/package-lock.json
 !capture/capture-remote.cjs

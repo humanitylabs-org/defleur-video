@@ -1,0 +1,76 @@
+{
+ "composition_sha256": "83417e5b5ebf1719903a5bee4f735924c5ff4100e4464c3adfa5b57de73ec23c",
+ "composition_hash_basis": "sha256 over sorted 'path\\0sha256\\n' lines of submitted files",
+ "files_sha256": {
+  "index.html": "99c2469b08dad7e9ea2b486dfaa43d982c3229ae3ce7d7611f29749344a0c293",
+  "style.css": "297994bedf45fb22a34a777803e2819754ec4513e2649368b902502d0ac72237",
+  "main.js": "62ba7e36faf9a0e6b5b85009c409fc728cd22ac03ed3e64ee4ab65ae20b2a391",
+  "assets/wedge.svg": "9da1b3b1d5453021472b6d53931371c5c9a6bc0c5f4fe79103c98fa9f03a5ec3",
+  "fonts/anton.woff2": "d0fa07ff63dd60cbc0e2f58e29c802dca2a5ae0276c999f59c6111ab7bbaec3b",
+  "fonts/inter-600.woff2": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+ },
+ "plan": {
+  "beats": [
+   {
+    "start": 3.45,
+    "end": 7.95,
+    "spoken_anchor": "...thinking that they will live forever, like, yeah, I don't think that's psychologically healthy",
+    "viewer_inference": "Believing you will never reach the end of your life is the delusion he is warning about.",
+    "visual_family": "diagram",
+    "state_before": "A finite lifeline from BIRTH to an END marker under the word LIFESPAN.",
+    "state_after": "The END marker is gone, the line runs off the edge under a gold infinity sign, which turns red under a NOT HEALTHY stamp.",
+    "causal_action": "On 'forever' the END marker is pushed off the canvas, the line stretches past the edge and the infinity sign draws itself; on 'psychologically healthy' the infinity turns red and the verdict stamp lands.",
+    "caption_treatment": "show",
+    "speaker_return": "Back on the speaker at 7.95 s for 'and I think that will have negative consequences on society'."
+   },
+   {
+    "start": 15.85,
+    "end": 27.45,
+    "spoken_anchor": "if every year of your immortal life looks like the current one, same meals, bed at 8:30, no exceptions. Is that really living or is it more of a sentence?",
+    "viewer_inference": "An endless life of identical years is not more life; it is a prison term.",
+    "visual_family": "illustration",
+    "state_before": "One year: a plate and an 8:30 clock in a cell, header YEAR 1.",
+    "state_after": "Sixteen identical years behind steel bars under the header A SENTENCE.",
+    "causal_action": "The year copies itself while the counter runs to YEAR 10,000+; on 'same meals' every plate lights, on 'bed at 8:30' every clock lights, on 'no exceptions' the habits merge into 0 EXCEPTIONS and all the years pulse in sync; 'really living?' replaces the counter, and on 'sentence' bars drop over the grid.",
+    "caption_treatment": "show",
+    "speaker_return": "Back to the conversation at 27.45 s for 'you've self-sentenced yourself to this, let's say jail to live forever'."
+   },
+   {
+    "start": 35.7,
+    "end": 41.8,
+    "spoken_anchor": "the main purpose of life, which is experience, love, integration, chaos and being able to kind of synthesize all that",
+    "viewer_inference": "The alternative to the rigid routine is many different things held together.",
+    "visual_family": "diagram",
+    "state_before": "The steel bars from the sentence image, under the header PURPOSE OF LIFE.",
+    "state_after": "Four separate qualities joined into one woven web around a bright centre.",
+    "causal_action": "The bars lift away on 'experience'; EXPERIENCE, LOVE, INTEGRATION and CHAOS appear on their words; on 'synthesize' each is drawn into a common centre and then tied to its neighbours.",
+    "caption_treatment": "show",
+    "speaker_return": "Back to the conversation at 41.8 s for 'and be okay with uncertainty and thrive in those environments'."
+   },
+   {
+    "start": 66.0,
+    "end": 74.2,
+    "spoken_anchor": "you're trying to maximize the overall average quality of your existence and your experience times the amount of time you live",
+    "viewer_inference": "Aliveness is an area, quality times time, not the length of a line of seconds.",
+    "visual_family": "diagram",
+    "state_before": "A thin line along the TIME axis labelled SECONDS EXISTING, header SECONDS.",
+    "state_after": "A tall filled area named ALIVENESS under the header QUALITY x TIME.",
+    "causal_action": "On 'overall average quality' the line of seconds grows upward along a QUALITY axis into an area; on 'existence and your experience' the area fills with lived moments; on 'times' the header becomes QUALITY x TIME and the area is named ALIVENESS.",
+    "caption_treatment": "show",
+    "speaker_return": "Back on the speaker at 74.2 s to close on his face: 'the amount of time you live'."
+   }
+  ],
+  "caption_emphasis": [
+   4.15,
+   12.52,
+   26.34,
+   51.45,
+   57.65,
+   69.45
+  ],
+  "caption_suppress": [],
+  "inserts": [],
+  "notes": "TSR Ep7 'Longevity isn't the same as living' - v3.1 conversation first, fresh passage (master 3798.17-3875.10 s). Author claude-opus-5-5 under Hermes Agent (reported identity). First supporting visual at 3.45 s edited; four sparse beats (30.4 s of 75.89 s); the speaker is full-frame between beats; no inserts (no documentary source is cited in this philosophical passage). No SFX, no music: render without sound_mix_job, speech-only edited.wav."
+ },
+ "plan_sha256": "b40039033ca987b9c657c6acac53d8e2f7fa6207add0ad25c9ab18cc3898faef"
+}
