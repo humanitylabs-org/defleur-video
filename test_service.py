@@ -194,6 +194,11 @@ class MediaTests(unittest.TestCase):
             self.assertFalse(job["delivery_approved"])
         return job
 
+    def artifact(self, jid, name):
+        status, data = self.request("GET", f"/v1/jobs/{jid}/stage-artifacts/{name}")
+        self.assertEqual(status, 200, (jid, name))
+        return data if isinstance(data, (dict, list)) else json.loads(data)
+
     def remote(self, method, path, body=None, kind="application/json", runner="mac"):
         c = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=60)
         headers = {"Content-Type": kind, "Authorization": "Bearer " + self.token, "X-DeFleur-Runner": runner}
@@ -477,6 +482,109 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/v1/workflow/docs/..%2Fplugin.json")[0], 404)
         self.assertEqual(self.request("DELETE", f"/v1/projects/{pid}")[0], 200)
         self.assertEqual(self.request("DELETE", f"/v1/projects/{other}")[0], 200)
+
+    def test_caption_spellings_render_behind_the_switch_and_the_gate_still_counts_spoken_words(self):
+        """wizard-os#1021: off -> refused, nothing else changes; on -> the recogniser gets the names, the burned captions get
+        the right spelling, and the delivery gate still compares the spoken words (edited ASR vs final ASR)."""
+        from client import Client
+        client = Client(f"http://127.0.0.1:{self.server.server_port}", self.token)
+        pid = client.upload(self.source)["id"]
+        src = self.stage(pid, "source-audio", {})
+        words = [{"word": " the", "start": 0.1, "end": 0.3, "probability": 0.9}, {"word": " PUG", "start": 0.35, "end": 0.6, "probability": 0.9},
+                 {"word": " wudgies,", "start": 0.62, "end": 0.95, "probability": 0.9}, {"word": " Mrs.", "start": 1.1, "end": 1.3, "probability": 0.9},
+                 {"word": " Nover.", "start": 1.35, "end": 1.8, "probability": 0.9}]
+        url, seen = self.fake_transcriber(words)
+        sw = Path(tempfile.mkdtemp(dir=self.root))
+        spell = {"pug wudgies": "Pukwudgies", "novair|nover": "Novaire"}
+        with patch.dict(os.environ, {"TRANSCRIBER_URL": url, "WIZARD_SWITCHES_DIR": str(sw)}):
+            self.assertFalse(service.switch_on("caption-spellings"))  # off by default
+            status, err = self.request("POST", f"/v1/projects/{pid}/stages/asr",
+                                       json.dumps({"audio_job": src["id"], "language": "en", "vocabulary": ["Novaire"]}))
+            self.assertEqual(status, 422)
+            self.assertIn("caption-spellings", err["error"])
+            asr = self.stage(pid, "asr", {"audio_job": src["id"], "language": "en"})
+            self.assertNotIn(b'name="prompt"', seen[-1])  # switch off: the request is unchanged
+            self.assertNotIn("prompt", self.artifact(asr["id"], "asr.json")["provenance"])
+            segments = [{"start_s": 0, "end_s": 2, "reason": "whole take"}]
+            asm = self.stage(pid, "pcm-assemble", {"audio_job": src["id"], "segments": segments})
+            audit = self.stage(pid, "speech-cut-audit", {"assemble_job": asm["id"], "regions": [{"mode": "keep", "start_s": .1, "end_s": 1.8}]})
+            scan = self.stage(pid, "acoustic-scan", {"assemble_job": asm["id"]})
+            n = scan["result"]["summary"]["windows"]
+            gate = self.stage(pid, "dialogue-gate", {"assemble_job": asm["id"], "audit_job": audit["id"], "scan_job": scan["id"],
+                              "filler_review": {"full_pass_reviewed": True, "candidates": [], "none_found": True},
+                              "acoustic_review": [{"window": i, "findings": "synthetic tone"} for i in range(n)],
+                              "reviewed_edges": [{"segment": 0, "edge": e, "decision": "keep", "findings": "edge"} for e in ("start", "end")]})
+            easr = self.stage(pid, "asr", {"audio_job": asm["id"], "language": "en"})
+            crop = self.stage(pid, "face-crop", {"assemble_job": asm["id"]})
+            body = {"assemble_job": asm["id"], "crop_job": crop["id"], "edited_asr_job": easr["id"]}
+            status, err = self.request("POST", f"/v1/projects/{pid}/stages/final-render", json.dumps({**body, "caption_spellings": spell}))
+            self.assertEqual(status, 422)
+            self.assertIn("caption-spellings", err["error"])
+            (sw / "switches.json").write_text(json.dumps({"caption-spellings": True}))
+            self.assertTrue(service.switch_on("caption-spellings"))
+            for bad in ({"x": ""}, {}, "pug"):
+                self.assertEqual(self.request("POST", f"/v1/projects/{pid}/stages/final-render",
+                                              json.dumps({**body, "caption_spellings": bad}))[0], 422, bad)
+            self.assertEqual(self.request("POST", f"/v1/projects/{pid}/stages/asr",
+                                          json.dumps({"audio_job": src["id"], "language": "en", "vocabulary": "Novaire"}))[0], 422)
+            hinted = self.stage(pid, "asr", {"audio_job": src["id"], "language": "en", "vocabulary": ["Novaire", "Pukwudgies"]})
+            self.assertIn(b'name="prompt"\r\n\r\nNames and terms: Novaire, Pukwudgies.', seen[-1])
+            self.assertEqual(self.artifact(hinted["id"], "asr.json")["provenance"]["prompt"],
+                             "Names and terms: Novaire, Pukwudgies.")
+            render = self.stage(pid, "final-render", {**body, "caption_spellings": spell})
+            rs = render["result"]["summary"]
+            self.assertTrue(all(v is True for k, v in rs["checks"].items() if k != "min_source_region_correlation"), rs["checks"])
+            timeline = self.artifact(render["id"], "locked-timeline.json")
+            self.assertEqual([w["word"] for w in timeline["words"]], ["the", "Pukwudgies,", "Mrs.", "Novaire."])
+            self.assertEqual(timeline["transcript"], "the Pukwudgies, Mrs. Novaire.")
+            self.assertEqual(rs["captions"]["words"], 4)
+            self.assertEqual([(a["heard"], a["caption"]) for a in rs["captions"]["spellings"]["applied"]],
+                             [("PUG wudgies,", "Pukwudgies,"), ("Nover.", "Novaire.")])
+            report = self.artifact(render["id"], "caption-spellings.json")
+            self.assertEqual((report["caption_words_before"], report["caption_words_after"]), (5, 4))
+            # The delivery gate reads the spoken words: its edited transcript is the raw ASR, five words, not the captions.
+            fasr = self.stage(pid, "asr", {"audio_job": render["id"], "language": "en"})
+            fscan = self.stage(pid, "acoustic-scan", {"assemble_job": render["id"]})
+            delivery = self.stage(pid, "delivery-gate", {"render_job": render["id"], "final_asr_job": fasr["id"],
+                                                         "final_scan_job": fscan["id"], "dialogue_gate_job": gate["id"]})
+            self.assertEqual(self.artifact(delivery["id"], "final-asr-compare.json")["edited_words"], 5)
+            self.assertEqual(delivery["result"]["summary"]["words_lost_vs_edited"], [])
+            # Switch off again: the plain render is what it was before (no spellings file, raw words).
+            (sw / "switches.json").write_text(json.dumps({"caption-spellings": False}))
+            plain = self.stage(pid, "final-render", body)
+            self.assertNotIn("spellings", plain["result"]["summary"]["captions"])
+            self.assertNotIn("caption-spellings.json", {a["name"] for a in plain["result"]["artifacts"]})
+            self.assertEqual([w["word"] for w in self.artifact(plain["id"], "locked-timeline.json")["words"]],
+                             ["the", "PUG", "wudgies,", "Mrs.", "Nover."])
+        self.assertEqual(self.request("DELETE", f"/v1/projects/{pid}")[0], 200)
+
+    def test_mcp_caption_spellings_and_vocabulary_follow_the_switch(self):
+        sw = Path(tempfile.mkdtemp(dir=self.root)) / "switches.json"
+        code = """
+out = {}
+try:
+    mcp_server.check_spellings({"pug wudgies": "Pukwudgies"})
+except mcp_server.ToolError as e:
+    out["off"] = str(e)
+out["vocab_off"] = mcp_server.vocab({"vocabulary": ["Novaire"]})
+mcp_server.SWITCHES_FILE.write_text(json.dumps({"caption-spellings": True}))
+out["on"] = mcp_server.check_spellings({"pug wudgies": "Pukwudgies"})
+out["vocab_on"] = mcp_server.vocab({"vocabulary": ["Novaire"]})
+out["none"] = mcp_server.vocab({})
+try:
+    mcp_server.check_spellings({"x": ""})
+except mcp_server.ToolError as e:
+    out["bad"] = str(e)
+print(json.dumps(out))
+"""
+        with patch.dict(os.environ, {"WIZARD_SWITCHES_FILE": str(sw)}):
+            r = self._mcp_py(code)
+        self.assertIn("defleur-video:caption-spellings", r["off"])
+        self.assertEqual(r["vocab_off"], {})
+        self.assertEqual(r["on"], {"pug wudgies": "Pukwudgies"})
+        self.assertEqual(r["vocab_on"], {"vocabulary": ["Novaire"]})
+        self.assertEqual(r["none"], {})
+        self.assertIn("right spelling", r["bad"])
 
     def test_open_mode_without_token(self):
         from client import Client
@@ -1399,6 +1507,46 @@ class MediaTests(unittest.TestCase):
             px2 = list(silent.crop((120, 1220, 960, 1460)).getdata())
             self.assertEqual(sum(1 for r, g, b in px2 if g > 180 and r < 120 and b < 120), 0)  # nothing green in a gap
 
+    def test_caption_spellings_join_words_split_across_caption_chunks(self):
+        """wizard-os#1021: "Pukwudgies" heard as PUG | WUDGIES (two caption chunks) and Novaire as NOVER become one right word."""
+        from editing import Rejected, apply_caption_spellings, parse_caption_spellings, parse_vocabulary, vocabulary_prompt
+        import workflow
+        root = workflow.UPSTREAM_ROOT
+        sys.path.insert(0, str(root / "skills/defleur-motion/scripts"))
+        import caption_layer
+        preset = json.loads((root / "defaults/james-preset.json").read_text())["caption"]
+        heard = "why there are trolls carved in the old pug wudgies, said Mrs. Nover. pugwudgies again".split()
+        words = [{"word": w, "start": round(0.3 * i, 3), "end": round(0.3 * i + 0.25, 3)} for i, w in enumerate(heard)]
+        before = caption_layer.style_chunks(words, preset)
+        split = next(i for i, w in enumerate(heard) if w == "pug")
+        self.assertTrue(any(c[-1] == split for c in before), before)  # PUG ends a chunk, WUDGIES starts the next
+        rules = parse_caption_spellings({"pug wudgies": "Pukwudgies", "novair|nover": "Novaire", "lenape": "Lenape"})
+        fixed, report = apply_caption_spellings(words, rules)
+        self.assertEqual([w["word"] for w in fixed],
+                         "why there are trolls carved in the old Pukwudgies, said Mrs. Novaire. Pukwudgies again".split())
+        self.assertEqual([r["heard"] for r in report["applied"]], ["pug wudgies,", "Nover.", "pugwudgies"])
+        self.assertEqual(report["unmatched"], ["lenape"])
+        puk = fixed[split]
+        self.assertEqual((puk["start"], puk["end"]), (words[split]["start"], words[split + 1]["end"]))
+        starts = [w["start"] for w in fixed]
+        self.assertEqual(starts, sorted(starts))
+        self.assertTrue(all(w["end"] > w["start"] for w in fixed))
+        self.assertTrue(any(fixed[i]["word"] == "Pukwudgies," for c in caption_layer.style_chunks(fixed, preset) for i in c))
+        # A replacement with more words than were heard spreads over the same span.
+        more, _ = apply_caption_spellings([{"word": "second", "start": 1.0, "end": 1.2}, {"word": "renaissance", "start": 1.2, "end": 1.8}],
+                                          parse_caption_spellings({"second renaissance": "The Second Renaissance"}))
+        self.assertEqual([w["word"] for w in more], ["The", "Second", "Renaissance"])
+        self.assertEqual((more[0]["start"], more[-1]["end"]), (1.0, 1.8))
+        self.assertEqual(apply_caption_spellings(words, []), (words, {"applied": [], "unmatched": []}))
+        for bad in ({}, [], {"x": ""}, {"": "X"}, {"a b c d e f g": "X"}, {"x": "a\nb"}, {"x": 3}, {"...": "X"}):
+            with self.assertRaises(Rejected, msg=bad):
+                parse_caption_spellings(bad)
+        self.assertEqual(parse_vocabulary(["Novaire", " Pukwudgies", "Novaire"]), ["Novaire", "Pukwudgies"])
+        self.assertEqual(vocabulary_prompt(["Novaire", "Lenape"]), "Names and terms: Novaire, Lenape.")
+        for bad in ([], ["x" * 61], "Novaire", [""], ["a\tb"], ["name %d" % i for i in range(101)]):
+            with self.assertRaises(Rejected, msg=bad):
+                parse_vocabulary(bad)
+
     def test_clean_cuts_keeps_override_only_on_the_approved_range(self):
         # mcp_server needs the venv's MCP SDK; run it there (the unit suite itself runs on the system Python).
         py = "/opt/venv/bin/python" if Path("/opt/venv/bin/python").exists() else os.environ.get("E2E_MCP_PYTHON", sys.executable)
@@ -1632,7 +1780,7 @@ print(json.dumps([cuts, mcp_server.keeps_from(cuts, 121.728), mcp_server.preview
         finally:
             del os.environ["BROWSER_URL"]
         self.assertEqual(status, 200)
-        self.assertEqual(caps["version"], "0.8.0")
+        self.assertEqual(caps["version"], "0.9.0")
         b = caps["workflow"]["motion"]["browser"]
         self.assertFalse(b["reachable"])
         self.assertIn("Browser app", b["fix"])

@@ -66,7 +66,7 @@ def status():
     return out
 
 
-def transcribe(wav, language, deadline):
+def transcribe(wav, language, deadline, prompt=""):
     parsed, model, key = config()
     try:
         code, data = _request(parsed, key, "GET", "/v1/models", timeout=10)
@@ -91,6 +91,8 @@ def transcribe(wav, language, deadline):
               ("timestamp_granularities[]", "word"), ("timestamp_granularities[]", "segment")]
     if language != "auto":
         fields.append(("language", language))
+    if prompt:  # names to expect (start_edit vocabulary, switch caption-spellings): whisper's initial prompt
+        fields.append(("prompt", prompt))
     body = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in fields)
     body += (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
              "Content-Type: audio/wav\r\n\r\n").encode() + audio + f"\r\n--{boundary}--\r\n".encode()
@@ -138,6 +140,7 @@ def transcribe(wav, language, deadline):
                        "audio_sha256": audio_sha, "audio_bytes": len(audio), "audio_format": "PCM s16le WAV, 16 kHz mono",
                        "endpoint": "/v1/audio/transcriptions", "response_format": "verbose_json",
                        "timestamp_granularities": ["word", "segment"], "temperature": 0,
+                       **({"prompt": prompt} if prompt else {}),
                        "note": "Replaces asr.py's local faster-whisper call (beam_size=5, vad_filter=True) with the shared Transcriber; decoding options are the Transcriber's."},
     }
     return receipt, raw

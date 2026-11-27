@@ -1,3 +1,24 @@
+# Release: 0.9.0 (caption spellings for names, behind the switch caption-spellings)
+
+For wizard-os#1021 (misheard names in Short captions: "Pukwudgies" burned as PUG / WUDGIES, "Novaire" as NOVER).
+
+- **App switch `caption-spellings`** ("Caption spellings for names", off by default, `GET/POST /api/switches`). Off: the
+  new arguments below are refused with a plain reason and every request, report and render is as in 0.8.0.
+- **`caption_spellings`** in `apply_cuts` (kept for the render) or in `render_final` options (replaces apply_cuts' list):
+  `{"pug wudgies": "Pukwudgies", "novair|nover": "Novaire"}`. A pattern is one or more words, `|` gives alternatives;
+  matching uses the joined, case- and punctuation-free words, so it also catches `Pugwudgies` and words that fell into two
+  caption chunks. The matched words become the right word(s) over the same time span (trailing punctuation kept) before
+  James' caption_layer.py chunks them (`final-render` stage input `caption_spellings`, also on a render worker). The
+  report's `captions.spellings` lists each change and any pattern never heard; `caption-spellings.json` is the receipt.
+- **The delivery gate is unchanged**: it still compares the edited-audio transcript (raw recogniser words) with the final
+  audio's transcript, so a lost spoken word still fails it. Only the burned caption words change.
+- **`start_edit(vocabulary=[...])`**: names the recogniser should expect (the show's list plus the project's). They go to
+  the Transcriber as the whisper prompt (`Names and terms: ...`) for every transcription of that project: source, edited,
+  near-cut re-checks and the final audio, so the gate compares like with like (`asr` stage input `vocabulary`).
+- Tests: `test_caption_spellings_join_words_split_across_caption_chunks`,
+  `test_caption_spellings_render_behind_the_switch_and_the_gate_still_counts_spoken_words`,
+  `test_mcp_caption_spellings_and_vocabulary_follow_the_switch`.
+
 # Release: 0.8.0 (arm64 image; capture and final render can run on a render worker)
 
 For wizard-os#997 (Company Clips Shorts render on the Mac render worker, several at once).
