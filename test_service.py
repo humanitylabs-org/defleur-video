@@ -194,6 +194,135 @@ class MediaTests(unittest.TestCase):
             self.assertFalse(job["delivery_approved"])
         return job
 
+    def remote(self, method, path, body=None, kind="application/json", runner="mac"):
+        c = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=60)
+        headers = {"Content-Type": kind, "Authorization": "Bearer " + self.token, "X-DeFleur-Runner": runner}
+        c.request(method, path, body, headers)
+        r = c.getresponse()
+        status, mime, data = r.status, r.getheader("Content-Type"), r.read()
+        c.close()
+        return status, json.loads(data) if mime == "application/json" else data
+
+    def claim(self, free=1, version=None, runner="mac"):
+        return self.remote("POST", "/v1/remote/claim", json.dumps({"runner": runner, "label": "the Mac", "arch": "arm64",
+                           "version": version or service.VERSION, "slots": 3, "free_slots": free}))
+
+    def run_remote(self, job, tamper=None):
+        """Do what the Mac render worker does: fetch the bundle, run stage_runner.py on it, hand back a tar."""
+        import tarfile
+        import stage_runner
+        status, data = self.remote("GET", job["bundle"])
+        self.assertEqual(status, 200, data)
+        work = Path(tempfile.mkdtemp(prefix="remote-997-", dir=self.root))
+        with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+            names = tar.getnames()
+            tar.extractall(work, filter="data")
+        result = stage_runner.run(work)
+        if tamper:
+            tamper(work / "out")
+        body = io.BytesIO()
+        with tarfile.open(fileobj=body, mode="w") as tar:
+            tar.add(work / "out" / "result.json", "result.json")
+            tar.add(work / "out" / "stage", "stage")
+        shutil.rmtree(work)
+        return names, result, self.remote("POST", f"/v1/remote/jobs/{job['id']}/result", body.getvalue(), "application/x-tar")
+
+    def test_remote_stage_round_trip_matches_a_local_render(self):
+        """A runner takes a waiting render stage, runs the same code on a bundle and hands back the same bytes."""
+        import remote_stages
+        self.addCleanup(self.server.store.remote.gone, "mac")   # the class shares one server
+        from client import Client
+        client = Client(f"http://127.0.0.1:{self.server.server_port}", self.token)
+        pid = client.upload(self.source)["id"]
+        src = self.stage(pid, "source-audio", {})
+        value = {"audio_job": src["id"], "segments": [{"start_s": 0, "end_s": .5, "reason": "a"}, {"start_s": 1.1, "end_s": 2, "reason": "b"}]}
+        local = self.stage(pid, "pcm-assemble", value)          # no runner: this box renders it, as before
+        self.assertNotIn("remote", local)
+        self.assertNotIn("render_host", local["result"])
+        with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"pcm-assemble"})):
+            status, idle = self.claim(free=0)                    # runner checks in (live), takes nothing yet
+            self.assertEqual((status, idle), (200, {"job": None}))
+            status, job = self.request("POST", f"/v1/projects/{pid}/stages/pcm-assemble", json.dumps(value))
+            self.assertEqual(status, 202, job)
+            time.sleep(1.0)
+            self.assertEqual(client.wait(job["id"], False)["state"], "queued")   # waits for the runner, not this box
+            where = self.remote("GET", "/v1/remote/status")[1]
+            self.assertEqual([(j["id"], j["where"]) for j in where["jobs"]], [(job["id"], "waiting_for_runner")])
+            self.assertEqual(self.claim(version="0.0.1")[0], 422)    # another app version never gets work
+            status, taken = self.claim()
+            self.assertEqual(taken["job"]["id"], job["id"])
+            self.assertEqual(self.remote("GET", "/v1/remote/status")[1]["jobs"][0]["where"], "runner")
+            self.assertEqual(self.remote("GET", taken["job"]["bundle"], runner="other")[0], 422)
+            self.assertEqual(self.remote("POST", f"/v1/remote/jobs/{job['id']}/heartbeat",
+                                         json.dumps({"progress": {"phase": "assemble", "started": time.time()}}))[0], 200)
+            self.assertEqual(client.wait(job["id"], False)["progress"]["phase"], "assemble")
+            names, _, (status, done) = self.run_remote(taken["job"])
+        self.assertEqual(status, 200, done)
+        self.assertIn("project/source.mp4", names)
+        self.assertIn(f"project/{src['id']}.stage/source.wav", names)
+        self.assertEqual(done["state"], "needs_review")
+        self.assertEqual(done["result"]["render_host"], "the Mac")
+        self.assertEqual(done["remote"], {"host": "the Mac", "state": "done", "note": None})
+        self.assertEqual([(a["name"], a["sha256"]) for a in done["result"]["artifacts"]],
+                         [(a["name"], a["sha256"]) for a in local["result"]["artifacts"]])
+        bundle = self.root / "remote-pcm-bundle"
+        client.stage_bundle(job["id"], bundle)                   # served exactly like a local stage
+        self.assertTrue((bundle / "edited.wav").is_file())
+
+    def test_remote_stage_given_back_tampered_or_silent_renders_here(self):
+        import remote_stages
+        self.addCleanup(self.server.store.remote.gone, "mac")   # the class shares one server
+        from client import Client
+        client = Client(f"http://127.0.0.1:{self.server.server_port}", self.token)
+        pid = client.upload(self.source)["id"]
+        with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"resolve-preset"})):
+            self.claim(free=0)
+            first = self.request("POST", f"/v1/projects/{pid}/stages/resolve-preset", "{}")[1]
+            taken = self.claim()[1]["job"]
+            self.assertEqual(taken["id"], first["id"])
+            def tamper(out):
+                f = next((out / "stage").iterdir())
+                f.write_bytes(f.read_bytes() + b" ")
+            _, _, (status, error) = self.run_remote(taken, tamper)
+            self.assertEqual(status, 422)
+            self.assertIn("differs from result.json", error["error"])
+            self.assertEqual(client.wait(first["id"], False)["state"], "running")   # still the runner's
+            # The runner gives it back (here: after the bad upload): this box renders it.
+            self.assertEqual(self.remote("POST", f"/v1/remote/jobs/{first['id']}/give-back",
+                                         json.dumps({"error": "Mac unreachable"}))[0], 200)
+            back = client.wait(first["id"], True)
+            self.assertEqual(back["state"], "needs_review", back.get("error"))
+            self.assertEqual(back["remote"], {"host": "the Mac", "state": "returned", "note": "Mac unreachable"})
+            self.assertNotIn("render_host", back["result"])
+            # A runner that stops reporting: its stage goes back to this box.
+            self.claim(free=0)
+            second = self.request("POST", f"/v1/projects/{pid}/stages/resolve-preset", "{}")[1]
+            self.assertEqual(self.claim()[1]["job"]["id"], second["id"])
+            with patch.object(remote_stages, "SILENT_S", 0), patch.object(remote_stages, "LIVE_S", 0):
+                self.server.store.next_reap = 0
+                back = client.wait(second["id"], True)
+            self.assertEqual(back["state"], "needs_review", back.get("error"))
+            self.assertEqual(back["remote"]["state"], "returned")
+            self.assertEqual(self.remote("POST", f"/v1/remote/jobs/{second['id']}/heartbeat", "{}")[0], 422)
+
+    def test_remote_queue_room_only_while_a_runner_is_live(self):
+        import remote_stages
+        store = service.Store(self.root / "remote-queue")
+        store.stop.set()
+        store.worker.join(timeout=2)
+        project = store.create(io.BytesIO(self.source.read_bytes()), self.source.stat().st_size)
+        with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"resolve-preset"})):
+            for _ in range(2):
+                store.submit_stage(project["id"], "resolve-preset", {})
+            with self.assertRaisesRegex(service.Rejected, "queue full"):   # no runner: the old two-job rule
+                store.submit_stage(project["id"], "resolve-preset", {})
+            store.remote_claim({"runner": "mac", "label": "the Mac", "arch": "arm64", "version": service.VERSION, "slots": 3, "free_slots": 0})
+            for _ in range(3):                                            # runner live: room for its 3 slots
+                store.submit_stage(project["id"], "resolve-preset", {})
+            with self.assertRaisesRegex(service.Rejected, "queue full"):
+                store.submit_stage(project["id"], "resolve-preset", {})
+        store.close()
+
     def test_piece1_stages_over_http(self):
         import workflow
         from client import Client
@@ -1503,7 +1632,7 @@ print(json.dumps([cuts, mcp_server.keeps_from(cuts, 121.728), mcp_server.preview
         finally:
             del os.environ["BROWSER_URL"]
         self.assertEqual(status, 200)
-        self.assertEqual(caps["version"], "0.7.2")
+        self.assertEqual(caps["version"], "0.8.0")
         b = caps["workflow"]["motion"]["browser"]
         self.assertFalse(b["reachable"])
         self.assertIn("Browser app", b["fix"])

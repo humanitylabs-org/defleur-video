@@ -1,11 +1,14 @@
 name: Build, test and publish image
-# This repo is the source of truth for DeFleur Video. Every push to main builds the image,
-# runs the unit suite and James' audio gate inside the hardened container, then publishes
-# the exact tested image as ghcr.io/humanitylabs-org/defleur-video-app:<runtipi version>
-# (a package linked to this repo; the older ghcr.io/humanitylabs-org/defleur-video belongs to wizard-app-store).
+# This repo is the source of truth for DeFleur Video. Every push to main builds the image natively on
+# amd64 and on arm64 (never under emulation), runs the unit suite and James' audio gate inside the
+# hardened container on each, then publishes the exact tested images as one multi-arch tag
+# ghcr.io/humanitylabs-org/defleur-video-app:<runtipi version> (a package linked to this repo; the older
+# ghcr.io/humanitylabs-org/defleur-video belongs to wizard-app-store). arm64 is what the Company's Mac
+# render worker runs (wizard-os#997). Pull requests build and test both without publishing.
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,8 +18,18 @@ concurrency:
   cancel-in-progress: false
 jobs:
   image:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Read the release version
@@ -28,17 +41,37 @@ jobs:
           grep -q "image: ghcr.io/humanitylabs-org/defleur-video-app:$V\$" runtipi/docker-compose.yml
           grep -q "^version: $V\$" wizard.md
           grep -q "^VERSION = \"$V\"" service.py
-      - name: Build image; unit suite and audio gate in the hardened container
-        run: VIDEO_IMAGE=defleur-video:ci TMPDIR="$RUNNER_TEMP" sh test-container.sh
+      - name: Build natively; unit suite and audio gate in the hardened container
+        run: |
+          VIDEO_IMAGE=defleur-video:ci TMPDIR="$RUNNER_TEMP" sh test-container.sh
+          test "$(docker image inspect -f '{{.Architecture}}' defleur-video:ci)" = '${{ matrix.arch }}'
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the exact tested image for this architecture
+        if: github.event_name != 'pull_request'
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          docker tag defleur-video:ci "ghcr.io/humanitylabs-org/defleur-video-app:$V-${{ matrix.arch }}"
+          docker push "ghcr.io/humanitylabs-org/defleur-video-app:$V-${{ matrix.arch }}"
+  publish:
+    needs: image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish the exact tested image
+      - name: One tag for both architectures (amd64 + arm64)
         run: |
-          V='${{ steps.v.outputs.version }}'
+          V='${{ needs.image.outputs.version }}'
+          R=ghcr.io/humanitylabs-org/defleur-video-app
           for tag in "$V" "main-${GITHUB_SHA::7}"; do
-            docker tag defleur-video:ci "ghcr.io/humanitylabs-org/defleur-video-app:$tag"
-            docker push "ghcr.io/humanitylabs-org/defleur-video-app:$tag"
+            docker buildx imagetools create -t "$R:$tag" "$R:$V-amd64" "$R:$V-arm64"
           done
+          docker buildx imagetools inspect "$R:$V" | tee /dev/stderr | grep -q 'linux/arm64'

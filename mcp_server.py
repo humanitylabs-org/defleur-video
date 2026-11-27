@@ -378,11 +378,15 @@ def stage(run: dict, op: str, body: dict, wait_s: float = 2400) -> dict:
             raise ToolError(f"{op} job {job['id']} still running after {wait_s:.0f} s")
         time.sleep(0.5)
         job = api("GET", f"/v1/jobs/{job['id']}")
+        where = (job.get("remote") or {}).get("host") if (job.get("remote") or {}).get("state") == "running" else None
+        if where != run.get("render_host"):
+            run["render_host"] = where
+            save(run)
         prog = job.get("progress")
         if prog != run.get("progress") and (time.monotonic() - last_saved > 2 or (prog or {}).get("phase") != (run.get("progress") or {}).get("phase")):
             run["progress"], last_saved = prog, time.monotonic()
             save(run)
-    run["progress"] = None
+    run["progress"], run["render_host"] = None, None
     run["steps"].append({"stage": op, "job": job["id"], "state": job["state"],
                          "elapsed_s": (job.get("result") or {}).get("elapsed_s")})
     save(run)
@@ -720,6 +724,7 @@ def do_capture_motion(run: dict) -> dict:
             "frame_images": [{**f, "url": dl(f["image"])} for f in cs["frames"]], "contact_sheet": dl(cs["sheet"]),
             "capture_json": dl(f"capture-{p['mode']}.json"), "composition_sha256": cs["composition_sha256"],
             "capture_seconds": cs["capture_seconds"], "crop_job": crop["id"], "capture_job": cap["id"], "framing": p.get("framing") or {},
+            **({"render_host": cap["result"]["render_host"]} if cap["result"].get("render_host") else {}),
             "next": ("LOOK at the frame images and the contact sheet (download them and view them). Check: overlays appear only in "
                      "planned beats, text is readable at phone size and inside x 120-960 / y 220-1180, inserts fill the frame, nothing "
                      "is left over after a beat. Fix and submit_motion again if needed. "
@@ -822,6 +827,7 @@ def do_render_final(run: dict) -> dict:
         "downloads": downloads,
         "auth_note": "Downloads need 'Authorization: Bearer ***' when the app has a token set." if TOKEN else None,
         "render_seconds": round(time.monotonic() - t0, 1),
+        **({"render_host": render["result"]["render_host"]} if render["result"].get("render_host") else {}),
         "stage_seconds": {st["stage"]: st.get("elapsed_s") for st in run.get("steps", [])},
         "final_render_phase_seconds": rs.get("phase_seconds"),
         "jobs": {"face_crop": crop["id"], "final_render": render["id"], "final_asr": fasr["id"], "final_scan": fscan["id"],
@@ -1206,6 +1212,8 @@ def public_run(r: dict, now: float | None = None) -> dict:
     """Run status with LIVE timings: elapsed is computed at read time, not when the run file was last saved."""
     now = time.time() if now is None else now
     out = {k: r.get(k) for k in ("id", "kind", "project", "state", "step", "error")}
+    if r.get("render_host"):  # a capture/final-render stage taken by the Company's render worker (remote_stages.py)
+        out["render_host"] = r["render_host"]
     running = r["state"] == "running"
     out["elapsed_s"] = round((now if running else (r.get("updated") or now)) - r["created"], 1)
     out["stages_done"] = [s["stage"] for s in r.get("steps", [])]
