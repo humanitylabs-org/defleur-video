@@ -379,14 +379,15 @@ def stage(run: dict, op: str, body: dict, wait_s: float = 2400) -> dict:
         time.sleep(0.5)
         job = api("GET", f"/v1/jobs/{job['id']}")
         where = (job.get("remote") or {}).get("host") if (job.get("remote") or {}).get("state") == "running" else None
-        if where != run.get("render_host"):
-            run["render_host"] = where
+        line = (job.get("render_place") or {}).get("status")   # only while a render worker is involved (wizard-os#1025)
+        if where != run.get("render_host") or line != run.get("render_status"):
+            run["render_host"], run["render_status"] = where, line
             save(run)
         prog = job.get("progress")
         if prog != run.get("progress") and (time.monotonic() - last_saved > 2 or (prog or {}).get("phase") != (run.get("progress") or {}).get("phase")):
             run["progress"], last_saved = prog, time.monotonic()
             save(run)
-    run["progress"], run["render_host"] = None, None
+    run["progress"], run["render_host"], run["render_status"] = None, None, None
     run["steps"].append({"stage": op, "job": job["id"], "state": job["state"],
                          "elapsed_s": (job.get("result") or {}).get("elapsed_s")})
     save(run)
@@ -1214,6 +1215,8 @@ def public_run(r: dict, now: float | None = None) -> dict:
     out = {k: r.get(k) for k in ("id", "kind", "project", "state", "step", "error")}
     if r.get("render_host"):  # a capture/final-render stage taken by the Company's render worker (remote_stages.py)
         out["render_host"] = r["render_host"]
+    if r.get("render_status") and r["state"] == "running":  # e.g. "The Mac is low on disk: rendering on this box, one at a time"
+        out["render_status"] = r["render_status"]
     running = r["state"] == "running"
     out["elapsed_s"] = round((now if running else (r.get("updated") or now)) - r["created"], 1)
     out["stages_done"] = [s["stage"] for s in r.get("steps", [])]

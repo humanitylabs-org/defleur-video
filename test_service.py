@@ -368,6 +368,55 @@ class MediaTests(unittest.TestCase):
             self.assertNotIn("remote", done)
             self.assertLess(time.monotonic() - started, 10)
 
+    def test_a_stage_that_falls_back_says_why(self):
+        """wizard-os#1025: while a runner is up, a stage on this box says why in one plain line (job, status, MCP)."""
+        import remote_stages
+        store = service.Store(self.root / "remote-why")
+        store.stop.set()
+        store.worker.join(timeout=2)
+        project = store.create(io.BytesIO(self.source.read_bytes()), self.source.stat().st_size)
+        claim = {"runner": "mac", "label": "the Mac", "arch": "arm64", "version": service.VERSION, "slots": 3}
+        with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"resolve-preset"})):
+            job = store.submit_stage(project["id"], "resolve-preset", {})
+            self.assertNotIn("render_place", store.job(job["id"]))              # no runner: nothing changes
+            with self.assertRaisesRegex(service.Rejected, "note"):
+                store.remote_claim({**claim, "free_slots": 0, "note": "line\nbreak"})
+            store.remote_claim({**claim, "free_slots": 0, "note": "The Mac is low on disk"})
+            self.assertEqual(store.job(job["id"])["render_place"],
+                             {"where": "waiting_here", "host": None, "why": "The Mac is low on disk",
+                              "status": "The Mac is low on disk: waiting for this box's render slot (one at a time)"})
+            row = store.remote_status()["jobs"][0]
+            self.assertEqual((row["where"], row["why"]), ("waiting_here", "The Mac is low on disk"))
+            self.assertEqual(store.remote_status()["runners"][0]["note"], "The Mac is low on disk")
+            with store.connect() as c:
+                c.execute("UPDATE jobs SET state='running' WHERE id=?", (job["id"],))
+            self.assertEqual(store.job(job["id"])["render_place"]["status"], "The Mac is low on disk: rendering on this box, one at a time")
+            with store.connect() as c:
+                c.execute("UPDATE jobs SET state='queued' WHERE id=?", (job["id"],))
+            store.remote_claim({**claim, "free_slots": 0})                       # no note: still says why
+            self.assertEqual(store.job(job["id"])["render_place"]["why"], "The Mac has no free render slot")
+            with patch.object(remote_stages, "HOLD_S", 0):                     # room, but it did not take it in time
+                with patch.object(store.remote, "ready", return_value=[{**store.remote.live()[0], "free": 1}]):
+                    self.assertEqual(store.job(job["id"])["render_place"]["why"], "The Mac did not take it within 0 s")
+            taken = store.remote_claim({**claim, "free_slots": 1})["job"]       # room: the Mac takes it
+            other = store.submit_stage(project["id"], "resolve-preset", {})
+            store.remote_claim({**claim, "free_slots": 0})                       # full with our stage: holds the next one
+            self.assertEqual(store.job(other["id"])["render_place"]["where"], "waiting_for_runner")
+            with patch.object(remote_stages, "HOLD_S", 0):
+                self.assertEqual(store.job(other["id"])["render_place"]["why"], "The Mac's render slots are all busy")
+            self.assertEqual(store.job(taken["id"])["render_place"], {"where": "runner", "host": "the Mac", "status": "Rendering on the Mac"})
+            store.remote_give_back(taken["id"], "mac", {"error": "colima did not start"})
+            self.assertEqual(store.job(taken["id"])["render_place"]["status"],
+                             "The Mac gave this render back (colima did not start): waiting for this box's render slot (one at a time)")
+        store.close()
+        running, done = self._mcp_py("""
+run = {"id": "r", "kind": "render_final", "project": "p", "state": "running", "step": "final-render", "created": 1000.0,
+       "render_status": "The Mac is low on disk: rendering on this box, one at a time"}
+print(json.dumps([mcp_server.public_run(run, now=1100.0), mcp_server.public_run({**run, "state": "done", "result": {}}, now=1100.0)]))
+""")
+        self.assertEqual(running["render_status"], "The Mac is low on disk: rendering on this box, one at a time")
+        self.assertNotIn("render_status", done)
+
     def test_piece1_stages_over_http(self):
         import workflow
         from client import Client

@@ -33,6 +33,7 @@ MAX_SLOTS = 4
 MAX_RESULT = 8 * 1024 ** 3
 RUNNER = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .'()-]{0,39}$")
+NOTE = re.compile(r"^[^\x00-\x1f\x7f]{1,120}$")
 ARTIFACT = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
 SUFFIXES = {".json", ".wav", ".png", ".mp4"}
 FORMAT = "defleur-remote-stage/1"
@@ -66,7 +67,7 @@ class Registry:
         self.lock = threading.Lock()
         self.runners: dict[str, dict] = {}
 
-    def seen(self, runner: str, label: str, slots: int, arch: str, free: int | None = None):
+    def seen(self, runner: str, label: str, slots: int, arch: str, free: int | None = None, note: str | None = None):
         now = time.time()
         free = slots if free is None else free
         with self.lock:
@@ -74,7 +75,18 @@ class Registry:
             # When this runner last went from no room to room: a waiting stage is held at most HOLD_S from then.
             room_since = old["room_since"] if old and old["free"] and now - old["seen"] <= LIVE_S else now
             self.runners[runner] = {"runner": runner, "label": label, "slots": slots, "free": free, "arch": arch,
-                                    "seen": now, "room_since": room_since}
+                                    "note": note if not free else None, "seen": now, "room_since": room_since}
+
+    def finished(self, runner: str):
+        """A runner handed back a finished stage: it has that slot free again now, before its next claim says so.
+        Without this, a Short's next stage queued in that gap would see the old free_slots 0 and render here."""
+        now = time.time()
+        with self.lock:
+            r = self.runners.get(runner)
+            if r and now - r["seen"] <= LIVE_S and r["free"] < r["slots"]:
+                if not r["free"]:
+                    r["room_since"], r["note"] = now, None
+                r["free"] += 1
 
     def gone(self, runner: str):
         with self.lock:
@@ -85,14 +97,17 @@ class Registry:
         with self.lock:
             return [dict(r) for r in self.runners.values() if now - r["seen"] <= LIVE_S]
 
-    def ready(self) -> list[dict]:
-        """Live runners that said they can take work now (free_slots > 0)."""
-        return [r for r in self.live() if r["free"] > 0]
+    def ready(self, busy: dict[str, int] | None = None) -> list[dict]:
+        """Live runners that can take work: they said they have a free slot, or every slot they have is busy with
+        stages of this box (one frees up when it finishes). A runner with no room and nothing of ours is not ready."""
+        busy = busy or {}
+        return [r for r in self.live() if r["free"] > 0 or busy.get(r["runner"], 0) > 0]
 
-    def holds(self, created: float, now: float | None = None) -> bool:
-        """Whether a waiting remote stage queued at `created` still waits for a runner instead of this box."""
+    def holds(self, created: float, busy: dict[str, int] | None = None, now: float | None = None) -> bool:
+        """Whether a waiting remote stage queued at `created` still waits for a runner instead of this box
+        (at most HOLD_S from when it was queued or, for a runner that just got room, from then)."""
         now = time.time() if now is None else now
-        return any(now - max(created, r["room_since"]) < HOLD_S for r in self.ready())
+        return any(now - (max(created, r["room_since"]) if r["free"] else created) < HOLD_S for r in self.ready(busy))
 
     def slots(self, busy: dict[str, int] | None = None) -> int:
         """Render slots the live runners can use: free ones plus the ones already running a stage here."""
@@ -100,12 +115,16 @@ class Registry:
         return sum(min(r["slots"], r["free"] + busy.get(r["runner"], 0)) for r in self.live())
 
 
+def busy_counts(c) -> dict[str, int]:
+    """Stages each runner is rendering for this box right now."""
+    return dict(c.execute("SELECT runner, count(*) FROM remote_jobs WHERE state='running' GROUP BY runner").fetchall())
+
+
 def queue_full(c, registry: Registry, stage: str | None) -> bool:
     """The old rule (two active jobs) unless a runner is live; then remote stages and the local
     stages of parallel Shorts each get room for the runner's slots."""
     active = [stage_of(r[0]) for r in c.execute("SELECT plan FROM jobs WHERE state IN ('queued','running')").fetchall()]
-    busy = dict(c.execute("SELECT runner, count(*) FROM remote_jobs WHERE state='running' GROUP BY runner").fetchall())
-    slots = registry.slots(busy)
+    slots = registry.slots(busy_counts(c))
     if not slots:
         return len(active) >= 2
     remote = sum(1 for s in active if s in REMOTE_STAGES)
@@ -120,11 +139,12 @@ def next_local(c, registry: Registry):
     rows = c.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY created").fetchall()
     if not rows:
         return None
-    if not registry.ready():
+    busy = busy_counts(c)
+    if not registry.ready(busy):
         return rows[0]
     returned = {r[0] for r in c.execute("SELECT job FROM remote_jobs WHERE state IN ('returned','failed')").fetchall()}
     for row in rows:
-        if stage_of(row["plan"]) not in REMOTE_STAGES or row["id"] in returned or not registry.holds(row["created"]):
+        if stage_of(row["plan"]) not in REMOTE_STAGES or row["id"] in returned or not registry.holds(row["created"], busy):
             return row
     return None
 
@@ -140,9 +160,43 @@ def reap(c, now: float | None = None) -> int:
     return len(stale)
 
 
+def capital(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def place(registry: Registry, state: str, created: float, rstate: str | None, rlabel: str | None, rnote: str | None,
+          busy: dict[str, int] | None = None) -> dict | None:
+    """Where a queued/running remote stage renders and, when it fell back to this box although a runner exists,
+    why, as one plain line (wizard-os#1025). None when no runner is involved: then nothing changes."""
+    if rstate == "running":
+        return {"where": "runner", "host": rlabel, "status": f"Rendering on {rlabel}"}
+    live = registry.live()
+    why = None
+    if rstate in ("returned", "failed"):
+        why = f"{capital(rlabel or 'the render worker')} gave this render back" + (f" ({rnote})" if rnote else "")
+    elif state == "queued" and registry.holds(created, busy):
+        r = registry.ready(busy)[0]
+        return {"where": "waiting_for_runner", "host": None, "status": f"Waiting for {r['label']}'s render slot"}
+    elif live:
+        ready = registry.ready(busy)
+        r = (ready or live)[0]
+        if ready and not r["free"]:
+            why = f"{capital(r['label'])}'s render slots are all busy"
+        elif ready:
+            why = f"{capital(r['label'])} did not take it within {HOLD_S:g} s"
+        else:
+            why = r.get("note") or f"{capital(r['label'])} has no free render slot"
+    if why is None:
+        return None
+    where = "waiting_here" if state == "queued" else "here"
+    tail = ("waiting for this box's render slot (one at a time)" if where == "waiting_here"
+            else "rendering on this box, one at a time")
+    return {"where": where, "host": None, "why": why, "status": f"{why}: {tail}"}
+
+
 def runner_info(value) -> dict:
-    if not isinstance(value, dict) or set(value) - {"runner", "label", "version", "arch", "slots", "free_slots"}:
-        raise Rejected("claim body is {runner, label, version, arch, slots, free_slots}")
+    if not isinstance(value, dict) or set(value) - {"runner", "label", "version", "arch", "slots", "free_slots", "note"}:
+        raise Rejected("claim body is {runner, label, version, arch, slots, free_slots, note?}")
     runner, label = value.get("runner"), value.get("label", "the render worker")
     if not isinstance(runner, str) or not RUNNER.fullmatch(runner):
         raise Rejected("runner must be a short lowercase name")
@@ -156,7 +210,11 @@ def runner_info(value) -> dict:
         raise Rejected("arch is required (for example arm64)")
     if not isinstance(value.get("version"), str):
         raise Rejected("version is required")
-    return {"runner": runner, "label": label, "version": value["version"], "arch": arch, "slots": slots, "free": free}
+    note = value.get("note")
+    if note is not None and (not isinstance(note, str) or not NOTE.fullmatch(note)):
+        raise Rejected("note is one short plain line: why the runner has no free slot (for example \"The Mac is low on disk\")")
+    return {"runner": runner, "label": label, "version": value["version"], "arch": arch, "slots": slots, "free": free,
+            "note": note or None}
 
 
 def claim_row(c, jid: str, runner: str) -> dict:
