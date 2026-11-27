@@ -1992,6 +1992,34 @@ print(json.dumps({"same": house_g is mcp_server.GUIDE and house_c is mcp_server.
             with wave.open(str(out / "edited.wav")) as a, wave.open(str(out / "finished.wav")) as b:
                 self.assertEqual(a.getnframes(), b.getnframes())
 
+    def test_style_light_serif_captions_pass_the_caption_check(self):
+        """A lowercase light serif (Playfair Display Italic, 48 px, one word per cue) passes: ink is counted, not averaged
+        over the band, so a short cue like "is" in a thin face is seen as drawn (the tester's v1/v2 Window Noir failed)."""
+        import styles
+        import workflow
+        import style_render
+        light = json.loads(self.style_pack()["files"]["style.json"])
+        light["preset"]["caption"].update(font="Playfair Display:style=Italic", font_size_px=48, uppercase=False, max_words=1,
+                                          text_color="#E8DCC4")
+        spec = styles.validate_spec(light)
+        house = json.loads((workflow.UPSTREAM_ROOT / workflow.DEFAULTS[0]).read_text())["caption"]
+        house["font_path"] = styles.resolve_font(house["font_match"], "house")
+        cs = styles.caption_style(spec, house)
+        self.assertEqual(style_render.cue_ink_min(cs), int(0.03 * (48 * 0.8 * 0.85) ** 2))
+        with tempfile.TemporaryDirectory(dir=self.root) as temp:
+            si = Path(temp) / "si.json"
+            si.write_text(json.dumps({"spec": spec, "caption_style": cs}))
+            out = Path(temp) / "render"
+            subprocess.run([workflow.HELPER_PYTHON, "-I", str(workflow.APP_ROOT / "style_render.py"), "test", str(si), str(out),
+                            "--caption-dir", str(workflow.helper("encode").parent)], check=True, timeout=600, capture_output=True)
+            live = json.loads((out / "live-check.json").read_text())
+            self.assertTrue(live["caption_band_changes_with_cues"], [(r["t"], r["band_ink_px"]) for r in live["samples"]])
+            self.assertTrue(live["pass"])
+            on = [r["band_ink_px"] for r in live["samples"] if r["cue_on"] and r["insert"] is None]
+            off = [r["band_ink_px"] for r in live["samples"] if not r["cue_on"] and r["insert"] is None]
+            self.assertGreaterEqual(min(on), live["cue_ink_min_px"])
+            self.assertLessEqual(max(off or [0]), style_render.BAND_EMPTY_MAX)
+
     def test_window_style_final_render_stage_and_house_untouched(self):
         """final-render with a window style input renders natively; without it the stage input is the house one, unchanged."""
         import styles

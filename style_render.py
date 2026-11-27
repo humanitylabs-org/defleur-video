@@ -30,6 +30,17 @@ from fractions import Fraction
 from pathlib import Path
 
 FFMPEG, FFPROBE = "ffmpeg", "ffprobe"
+# Caption check (decoded pixels): a pixel is ink when a channel is more than INK_DELTA off the background. A cue on
+# screen must ink at least INK_PER_PX2 x (smallest drawn size)^2 pixels in its band: a lone "I" in the lightest installed
+# face (Cormorant Garamond) inks 0.057 x size^2, Playfair Display Italic 0.09. With no cue the band holds at most
+# BAND_EMPTY_MAX ink pixels (compression noise on a flat background stays below INK_DELTA).
+INK_DELTA, INK_PER_PX2, INK_MIN_FLOOR, BAND_EMPTY_MAX = 48, 0.03, 4, 3
+
+
+def cue_ink_min(style: dict) -> int:
+    """Fewest ink pixels a cue may draw: the font at its smallest (min_scale fit, first pop frame), one thin glyph."""
+    px = float(style["font_size_px"]) * min(1.0, float(style.get("min_scale", 0.8))) * min(1.0, float(style.get("pop_from_scale", 1.0)))
+    return max(INK_MIN_FLOOR, int(INK_PER_PX2 * px * px))
 
 
 def hex_rgb(hex_color: str | None, default=(0, 0, 0)) -> tuple[int, int, int]:
@@ -643,13 +654,16 @@ def check(a) -> None:
         row["layers_inked"] = {k: round(float(np.mean(np.abs(img[b[1]:b[3], b[0]:b[2]] - bg))), 2) for k, b in layer_boxes.items()}
         bl, bt, br, bb = band
         row["band_mean_abs_diff_from_background"] = round(float(np.mean(np.abs(img[bt:bb, bl:br] - bg))), 2)
+        # Ink = pixels clearly off the background (any channel > INK_DELTA). A count, not a mean over the whole band:
+        # a short cue in a light serif ("you are") covers little of a 1000 px wide band but is plainly drawn.
+        row["band_ink_px"] = int(np.count_nonzero(np.abs(img[bt:bb, bl:br] - bg).max(axis=2) > INK_DELTA))
         rows.append(row)
     live_rows = [r for r in rows if r["insert"] is None]
     window_ok = bool(live_rows) and all(r["window_psnr_db"] >= 25 and all(r["window_psnr_db"] > v for v in r["window_shifted_psnr_db"].values())
                                         for r in live_rows)
-    on_d = [r["band_mean_abs_diff_from_background"] for r in live_rows if r["cue_on"]]
-    off_d = [r["band_mean_abs_diff_from_background"] for r in live_rows if not r["cue_on"]]
-    caption_ok = bool(on_d) and min(on_d) >= 4.0 and (not off_d or max(off_d) < 1.5)
+    on_d = [r["band_ink_px"] for r in live_rows if r["cue_on"]]
+    off_d = [r["band_ink_px"] for r in live_rows if not r["cue_on"]]
+    caption_ok = bool(on_d) and min(on_d) >= cue_ink_min(style) and (not off_d or max(off_d) <= BAND_EMPTY_MAX)
     layers_ok = all(all(v >= 3.0 for v in r["layers_inked"].values()) for r in rows) and len(layer_boxes) == len(
         [l for l in spec.get("text_layers", []) if l["kind"] == "fixed" or (si.get("slots") or {}).get(l.get("slot"))])
     outside_ok = all(r["outside_mean_abs_diff_from_background"] < 3.0 for r in rows)
@@ -667,6 +681,7 @@ def check(a) -> None:
     sheet.save(root / "final-frame-sample.png")
     result = {"layout": "window", "frames": frames, "caption_cues": len(caps.chunks), "cue_on_frames": ledger["cue_on_frames"],
               "cue_off_frames": frames - ledger["cue_on_frames"], "samples": rows,
+              "cue_ink_min_px": cue_ink_min(style), "band_empty_max_px": BAND_EMPTY_MAX,
               "window_matches_layout": window_ok, "crop_matches_ledger": window_ok, "caption_band_changes_with_cues": caption_ok,
               "text_layers_every_sampled_frame": layers_ok, "background_outside_layout": outside_ok, "inserts_in_box": inserts_ok,
               "loudness": loud, "loudness_on_target": loud_ok, "punched_frames": ledger["punched_frames"],
@@ -674,7 +689,7 @@ def check(a) -> None:
               "method": ("final.mp4 decoded by FFmpeg; the window region must match an independent FFmpeg lanczos scale of the "
                          "ledger's source frame (punch crop and grade applied by numpy) at PSNR>=25 dB and beat the same region "
                          "shifted 8 px each way; pixels outside the window, layer ink boxes, caption band and active insert box must "
-                         "be background; every text layer box is inked in every sampled frame; the caption band changes exactly "
+                         "be background; every text layer box is inked in every sampled frame; the caption band holds ink exactly "
                          "with cues; during inserts the box covers the window; loudness by ffmpeg ebur128 (true peak).")}
     (root / "live-check.json").write_text(json.dumps(result, indent=2))
     print(json.dumps({k: result[k] for k in ("pass", "window_matches_layout", "caption_band_changes_with_cues", "text_layers_every_sampled_frame",
