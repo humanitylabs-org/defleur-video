@@ -248,7 +248,7 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(client.wait(job["id"], False)["state"], "queued")   # waits for the runner, not this box
             where = self.remote("GET", "/v1/remote/status")[1]
             self.assertEqual([(j["id"], j["where"]) for j in where["jobs"]], [(job["id"], "waiting_for_runner")])
-            self.assertEqual(self.claim(version="0.0.1")[0], 422)    # another app version never gets work
+            self.assertEqual(self.claim(version="0.0.1", runner="old")[0], 422)   # another app version never gets work
             status, taken = self.claim()
             self.assertEqual(taken["job"]["id"], job["id"])
             self.assertEqual(self.remote("GET", "/v1/remote/status")[1]["jobs"][0]["where"], "runner")
