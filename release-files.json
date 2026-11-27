@@ -56,6 +56,8 @@
   "images/defleur-video/requirements.lock",
   "images/defleur-video/scan_windows.py",
   "images/defleur-video/service.py",
+  "images/defleur-video/stage_runner.py",
+  "images/defleur-video/remote_stages.py",
   "images/defleur-video/test-container.sh",
   "images/defleur-video/test_service.py",
   "images/defleur-video/test_workflow_scale.py",
