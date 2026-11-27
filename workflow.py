@@ -18,7 +18,8 @@ import sys
 import time
 import wave
 
-from editing import DURATION_TOLERANCE_S, Rejected
+from editing import (DURATION_TOLERANCE_S, Rejected, apply_caption_spellings, parse_caption_spellings, parse_vocabulary,
+                     vocabulary_prompt)
 import motion
 import styles
 import transcriber
@@ -366,8 +367,9 @@ def validate(stage, value, metadata, lookup):
         _obj(value, {"language"})
         _lang(value["language"])
     elif stage == "asr":
-        _obj(value, {"audio_job", "language"}, {"start_s", "end_s"})
+        _obj(value, {"audio_job", "language"}, {"start_s", "end_s", "vocabulary"})
         _lang(value["language"], allow_auto=True)
+        parse_vocabulary(value.get("vocabulary"))
         if ("start_s" in value) != ("end_s" in value):
             raise Rejected("asr window needs both start_s and end_s")
         if "start_s" in value:
@@ -463,8 +465,9 @@ def validate(stage, value, metadata, lookup):
         if value["mode"] not in ("smoke", "proof"):
             raise Rejected("motion-capture mode must be smoke or proof (full capture runs inside final-render)")
     elif stage == "final-render":
-        _obj(value, {"assemble_job", "crop_job", "edited_asr_job"}, {"preset_job", "proof_job", "style"})
+        _obj(value, {"assemble_job", "crop_job", "edited_asr_job"}, {"preset_job", "proof_job", "style", "caption_spellings"})
         _render_refs(value, lookup)
+        parse_caption_spellings(value.get("caption_spellings"))
         if "style" in value:
             _style_input(value["style"])
             if value["style"]["spec"]["layout"]["mode"] == "window" and "proof_job" in value:
@@ -659,7 +662,8 @@ def _asr(ctx, value, source, metadata):
     window = ["-ss", str(value["start_s"]), "-t", str(round(value["end_s"] - value["start_s"], 6))] if "start_s" in value else []
     ctx.native(["/usr/bin/ffmpeg", "-v", "error", "-xerror", "-n", "-i", wav, *window, "-ac", "1", "-ar", "16000",
                 "-c:a", "pcm_s16le", "-threads", "1", ctx.root / "asr-input.wav"], timeout=120, file_limit=256 * 1024 * 1024, cpu=200)
-    receipt, raw = transcriber.transcribe(ctx.root / "asr-input.wav", value["language"], ctx.deadline)
+    receipt, raw = transcriber.transcribe(ctx.root / "asr-input.wav", value["language"], ctx.deadline,
+                                          prompt=vocabulary_prompt(parse_vocabulary(value.get("vocabulary"))))
     receipt["provenance"]["input_artifact"] = {"job": value["audio_job"], "name": name, "sha256": sha(wav)}
     ctx.write("asr.json", receipt)
     ctx.write("transcriber-response.json", raw)
@@ -893,6 +897,19 @@ def _locked_words(asr_words, duration):
     return words, adjusted
 
 
+def _spelled(ctx, value, words, write=True):
+    """Apply the editor's caption_spellings (switch caption-spellings) to the caption words; write what changed."""
+    if "caption_spellings" not in value:
+        return words, None
+    fixed, report = apply_caption_spellings(words, parse_caption_spellings(value["caption_spellings"]))
+    report = {**report, "caption_words_before": len(words), "caption_words_after": len(fixed),
+              "basis": "Caption words only. The delivery gate still compares the edited-audio transcript (unchanged) with "
+                       "the final audio's transcript."}
+    if write:
+        ctx.write("caption-spellings.json", report)
+    return fixed, report
+
+
 def _final_render(ctx, value, source, metadata):
     phases, _t = {}, [time.monotonic()]
 
@@ -922,6 +939,7 @@ def _final_render(ctx, value, source, metadata):
     words, adjusted = _locked_words(json.loads(asr.read_text())["words"], float(mapped["duration"]))
     if not words:
         raise Rejected("the edited-audio transcript has no words; captions need at least one")
+    words, spelled = _spelled(ctx, value, words)
     ctx.write("caption-style.json", style)
     ctx.write("locked-timeline.json", {"duration": mapped["duration"], "fps": mapped["fps"], "frames": mapped["frames"],
                                        "canvas": list(CANVAS), "words": words, "transcript": " ".join(w["word"] for w in words),
@@ -1031,7 +1049,8 @@ def _final_render(ctx, value, source, metadata):
             "frames": verified["frames"], "fps": verified["fps"], "duration_s": round(verified["audio_duration"], 3),
             "final_sha256": verified["sha256"], "final_bytes": (root / "final.mp4").stat().st_size,
             "captions": {"cues": live.get("caption_cues"), "words": len(words), "frames_with_cue": live["cue_on_frames"],
-                         "font": style["font_path"], "timing_adjustments": adjusted},
+                         "font": style["font_path"], "timing_adjustments": adjusted,
+                         **({"spellings": {k: spelled[k] for k in ("applied", "unmatched")}} if spelled else {})},
             "crop": {"setups": face["setups"], "face_pass": face["pass"], "flags": face["flags"]},
             "checks": {"full_decode": integrity["full_decode_pass"], "caption_bounds_and_band": integrity["caption_bounds_pass"],
                        "crop_matches_ledger": live["crop_matches_ledger"], "picture_map_verified": integrity["picture_map_verified"],
@@ -1197,6 +1216,8 @@ def _motion_root(ctx, value, mode):
     words, adjusted = _locked_words(json.loads(asr.read_text())["words"], float(mapped["duration"]))
     if not words:
         raise Rejected("the edited-audio transcript has no words; captions need at least one")
+    if mode == "full":  # only the full capture feeds the burned captions
+        words, _ = _spelled(ctx, value, words, write=False)
     timeline = {"duration": mapped["duration"], "fps": mapped["fps"], "frames": frames, "canvas": list(CANVAS), "words": words,
                 "transcript": " ".join(w["word"] for w in words), "word_source": "Transcriber ASR of the edited audio (apply_cuts' edited-asr job)",
                 "timing_adjustments": adjusted}

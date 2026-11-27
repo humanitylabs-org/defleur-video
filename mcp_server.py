@@ -26,7 +26,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # run with -I: make the app's pure helpers importable
 from editing import (FILLERS, HANDLE_S, PAUSE_S, REPORT_FILLERS, align_words, candidates_from,  # noqa: E402,F401
                      cut_regions, cut_sound_check, delivery_word_review, diff_words, edit_word_review,
-                     recheck_result, recheck_windows)
+                     recheck_result, recheck_windows, parse_caption_spellings, parse_vocabulary)
 import styles  # noqa: E402  (style packs, wizard-os#1012)
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -39,6 +39,7 @@ VERSION = os.environ.get("VIDEO_VERSION", "")
 ID = re.compile(r"^[a-f0-9]{32}$")
 RUN_ID = re.compile(r"^run-[a-f0-9]{32}$")
 LOCK = threading.Lock()
+SWITCHES_FILE = Path(os.environ.get("WIZARD_SWITCHES_FILE") or "/data/switches.json")
 LANG_NAMES = {"english": "en", "spanish": "es", "french": "fr", "german": "de", "italian": "it", "portuguese": "pt",
               "dutch": "nl", "japanese": "ja", "chinese": "zh", "korean": "ko", "russian": "ru", "arabic": "ar", "hindi": "hi"}
 
@@ -307,6 +308,35 @@ def base_url(ctx: Context | None) -> str:
     return "http://127.0.0.1:8787"
 
 
+def spellings_on() -> bool:
+    """The owner's app switch caption-spellings (wizard.app-switches/1, off by default; the service owns the state)."""
+    try:
+        return json.loads(SWITCHES_FILE.read_text()).get("caption-spellings") is True
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+SPELLINGS_OFF = ("caption spellings and recogniser names are off on this Wizard: the owner turns on the DeFleur Video switch "
+                 "'Caption spellings for names' (defleur-video:caption-spellings)")
+
+
+def check_spellings(value):
+    if value is None:
+        return None
+    if not spellings_on():
+        raise ToolError(SPELLINGS_OFF)
+    try:
+        parse_caption_spellings(value)
+    except ValueError as e:
+        raise ToolError(str(e)) from None
+    return value
+
+
+def vocab(params: dict) -> dict:
+    """asr stage extra for a project's recogniser names (empty when none were given or the switch is off now)."""
+    return {"vocabulary": params["vocabulary"]} if params.get("vocabulary") and spellings_on() else {}
+
+
 # ---------- background runs ----------
 
 def run_path(rid: str) -> Path:
@@ -494,7 +524,7 @@ def do_start_edit(run: dict) -> dict:
     lang = run["params"].get("language") or "auto"
     src = stage(run, "source-audio", {})
     summary = src["result"]["summary"]
-    asr = stage(run, "asr", {"audio_job": src["id"], "language": lang})
+    asr = stage(run, "asr", {"audio_job": src["id"], "language": lang, **vocab(run["params"])})
     detected = asr["result"]["summary"].get("language_detected") or (lang if lang != "auto" else None)
     detected = LANG_NAMES.get(str(detected).lower(), str(detected).lower()) if detected else None
     if not detected or not re.fullmatch(r"[a-z]{2,3}", detected):
@@ -535,6 +565,10 @@ def do_start_edit(run: dict) -> dict:
         "preflight": {k: pre["result"]["summary"].get(k) for k in ("helper_passed", "missing")},
         "jobs": {"source_audio": src["id"], "asr": asr["id"], "align": al["id"]},
         "asr_limitation": asr_receipt.get("limitation") or "ASR can omit fillers or miss words.",
+        **({"vocabulary": run["params"]["vocabulary"],
+            "vocabulary_note": ("These names were sent to the recogniser as a hint for every transcription of this project "
+                                "(source, edited, final). If one still comes out wrong, fix the caption with caption_spellings "
+                                "in apply_cuts or render_final.")} if run["params"].get("vocabulary") else {}),
         "next": ("Show the owner proposed_cuts as a readable list (time range, the words around it, reason). "
                  + (f"Also tell them about the {len(untranscribed)} untranscribed_sound gap(s): there is sound the transcript does not "
                     "show (maybe a skipped sentence); they stay in unless the owner listens and asks to cut them. " if untranscribed else "")
@@ -630,7 +664,7 @@ def do_apply_cuts(run: dict) -> dict:
     cut_receipt = artifact(audit["id"], "cut-regression.json")
     scan = stage(run, "acoustic-scan", {"assemble_job": asm["id"]})
     windows = artifact(scan["id"], "acoustic-windows.json")["windows"]
-    easr = stage(run, "asr", {"audio_job": asm["id"], "language": lang})
+    easr = stage(run, "asr", {"audio_job": asm["id"], "language": lang, **vocab(edit)})
     edited_words = [w for w in artifact(easr["id"], "asr.json")["words"]]
     got = [norm(w["word"]) for w in edited_words if norm(w["word"])]
     review_words = edit_word_review(kept_words, got, blocks, duration, words)
@@ -645,7 +679,7 @@ def do_apply_cuts(run: dict) -> dict:
         save(run)
         edited_len = float(asm["result"]["summary"]["duration_s"])
         for win in recheck_windows(lost_near, blocks, edited_len):
-            wj = stage(run, "asr", {"audio_job": asm["id"], "language": lang, "start_s": win[0], "end_s": win[1]})
+            wj = stage(run, "asr", {"audio_job": asm["id"], "language": lang, "start_s": win[0], "end_s": win[1], **vocab(edit)})
             toks = [w["word"] for w in artifact(wj["id"], "asr.json")["words"]]
             heard = set(recheck_result(win, kept_words, blocks, toks, lost_near))
             rechecks.append({"edited_window_s": win, "asr_job": wj["id"], "text": " ".join(toks)[:600],
@@ -765,6 +799,9 @@ def do_apply_cuts(run: dict) -> dict:
         "downloads": downloads, "preview": preview_note,
         "auth_note": "Downloads need 'Authorization: Bearer <VIDEO_API_TOKEN>' when the app has a token set." if TOKEN else None,
         "jobs": {"pcm_assemble": asm["id"], "speech_cut_audit": audit["id"], "acoustic_scan": scan["id"], "edited_asr": easr["id"], "dialogue_gate": gate["id"]},
+        **({"caption_spellings": run["params"]["caption_spellings"],
+            "caption_spellings_note": "Kept for render_final: its burned captions use these spellings (a caption_spellings "
+                                      "option in render_final replaces them)."} if run["params"].get("caption_spellings") else {}),
         "next": ("Tell the owner in plain words: seconds removed, any words lost or added, gate pass/fail with the reason, and the download links. "
                  "Ask them to listen to the edited audio/preview. If words were lost or the gate failed, propose adjusted cuts and call apply_cuts again. "
                  "When the cut is good: convert the approved motion plan to edited seconds with time_map, author the composition "
@@ -849,9 +886,11 @@ def do_render_final(run: dict) -> dict:
         if chosen["spec"]["layout"]["mode"] == "crop" and overlay:
             preset = stage(run, "resolve-preset", {"project": {"version": 1, **overlay}})
             body["preset_job"] = preset["id"]
+    if run["params"].get("caption_spellings"):
+        body["caption_spellings"] = run["params"]["caption_spellings"]
     render = stage(run, "final-render", body, wait_s=14500)
     lang = run["params"]["language"]
-    fasr = stage(run, "asr", {"audio_job": render["id"], "language": lang})
+    fasr = stage(run, "asr", {"audio_job": render["id"], "language": lang, **vocab(run["params"])})
     fscan = stage(run, "acoustic-scan", {"assemble_job": render["id"]})
     gate_job = None
     run["step"] = "delivery-gate"
@@ -912,7 +951,12 @@ def do_render_final(run: dict) -> dict:
                  "basis": "[x, y, w, h] source-pixel crop, fixed per setup; faces checked on sampled frames (YuNet) with a 15% margin and above the caption band."},
         "captions": {"cues": rs["captions"]["cues"], "words": rs["captions"]["words"], "frames_with_caption": rs["captions"]["frames_with_cue"],
                      "font": rs["captions"]["font"], "caption_band_changes_with_cues": rs["checks"]["caption_bounds_and_band"],
-                     "word_source": "Transcriber ASR of the edited audio (apply_cuts)"},
+                     "word_source": "Transcriber ASR of the edited audio (apply_cuts)",
+                     **({"spellings": rs["captions"]["spellings"],
+                         "spellings_note": ("applied: each misheard caption and what it now shows; unmatched: patterns not heard "
+                                            "anywhere in this edit (check the spelling of the pattern). The delivery gate still "
+                                            "compares the spoken words, not the captions.")}
+                        if rs["captions"].get("spellings") else {})},
         "delivery_gate": {"pass": bool(gs.get("delivery_gate_pass")) and not words_fail and not failed_checks,
                           "audio_gate_script_pass": bool(gs.get("delivery_gate_pass")),
                           "reason": ((f"{gs.get('lost_words_reason') or str(len(lost or [])) + ' word(s) lost'}: {' '.join(lost[:20])}; ") if words_fail else
@@ -1114,9 +1158,11 @@ def import_file(path: str) -> dict:
     "AND the motion plan in ONE question and get their approval (or changes) BEFORE calling apply_cuts. language is optional (e.g. 'en'); default is auto-detect. "
     "style / style_version (optional): an editing style from capabilities.styles; omit for James' house style. The project records it and "
     "the result then carries that style's STYLE.md and rules. joins (optional, styles that punch in): source seconds where the excerpt "
-    "jumps to a later range."))
-def start_edit(project_id: str, language: str | None = None, style: str | None = None, style_version: str | None = None,
-               joins: list[float] | None = None) -> dict:
+    "jumps to a later range. "
+    "vocabulary (only with the owner's caption-spellings switch on): names and terms the recogniser should expect, the show's list "
+    "plus this project's, e.g. ['Novaire', 'Pukwudgies', 'Lenape']; used for every transcription of this project."))
+def start_edit(project_id: str, language: str | None = None, vocabulary: list[str] | None = None, style: str | None = None,
+               style_version: str | None = None, joins: list[float] | None = None) -> dict:
     def go():
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex id returned by the upload")
@@ -1124,6 +1170,13 @@ def start_edit(project_id: str, language: str | None = None, style: str | None =
         if language is not None and not re.fullmatch(r"[a-z]{2,3}", language):
             raise ToolError("language must be an ISO code such as 'en' or omitted for auto-detect")
         params = {"language": language}
+        if vocabulary is not None:
+            if not spellings_on():
+                raise ToolError(SPELLINGS_OFF)
+            try:
+                params["vocabulary"] = parse_vocabulary(vocabulary)
+            except ValueError as e:
+                raise ToolError(str(e)) from None
         try:
             chosen = styles.resolve(style, None if style_version is None else str(style_version))
             if chosen or joins:
@@ -1150,8 +1203,11 @@ def start_edit(project_id: str, language: str | None = None, style: str | None =
     "background; returns a run_id immediately. Keep calling get_status(run_id) until 'done' for the report: seconds removed, "
     "words lost/added vs the source, gate pass/fail with reasons and download URLs. segments=[] means NO cuts (keep the whole "
     "source, captions/framing only); use it to return to an uncut edit. The report's time_map converts source seconds to the "
-    "edited seconds that submit_motion's plan uses."))
-def apply_cuts(project_id: str, segments: list[dict], ctx: Context) -> dict:
+    "edited seconds that submit_motion's plan uses. caption_spellings (only with the owner's caption-spellings switch on): "
+    "{\"heard words\": \"Right Spelling\"} for names the recogniser got wrong, e.g. {\"pug wudgies\": \"Pukwudgies\", "
+    "\"novair|nover\": \"Novaire\"} ('|' = alternatives; case and punctuation ignored; may join words split across caption "
+    "chunks); render_final's burned captions use them."))
+def apply_cuts(project_id: str, segments: list[dict], ctx: Context, caption_spellings: dict | None = None) -> dict:
     def go():
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex project id")
@@ -1161,11 +1217,13 @@ def apply_cuts(project_id: str, segments: list[dict], ctx: Context) -> dict:
         edit = done[-1]["result"]
         cuts = clean_cuts(segments, edit["duration_s"])
         keeps_from(cuts, edit["duration_s"])
+        params = {"cuts": cuts, "duration_s": edit["duration_s"], "edit": edit, "base_url": base_url(ctx)}
+        if caption_spellings is not None:
+            params["caption_spellings"] = check_spellings(caption_spellings)
         with LOCK:
             if runs_for(project_id, state="running"):
                 raise ToolError("a run is already in progress for this project; call get_status(project_id)")
-            run = start_run("apply_cuts", project_id, {"cuts": cuts, "duration_s": edit["duration_s"], "edit": edit,
-                                                       "base_url": base_url(ctx)}, do_apply_cuts)
+            run = start_run("apply_cuts", project_id, params, do_apply_cuts)
         return {"run_id": run["id"], "state": "running", "cuts": cuts,
                 "next": f"Call get_status('{run['id']}') now and keep calling it until state is 'done' (each call waits up to ~55 s)."}
     return _result(go)
@@ -1313,14 +1371,21 @@ def capture_motion(project_id: str, mode: str, ctx: Context, framing: dict | Non
     "{'motion': true} after a passing capture_motion 'proof' of the current composition (full capture of every frame, "
     "motion-window and caption-suppression checks); {'framing': {...}} as in preview_framing (with motion, the proof's "
     "framing is used). A project started with a style: 'slots' carries the approved text for its slots (e.g. {'title': ..., "
-    "'tagline': ...}); a window-layout style needs no capture_motion proof (the app draws its inserts after submit_motion)."))
+    "'tagline': ...}); a window-layout style needs no capture_motion proof (the app draws its inserts after submit_motion)."
+    " {'caption_spellings': {\"heard words\": \"Right Spelling\"}} (only with the owner's caption-spellings "
+    "switch on) fixes misheard names in the burned captions, as in apply_cuts, and replaces apply_cuts' list."))
 def render_final(project_id: str, ctx: Context, options: dict | None = None) -> dict:
     def go():
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex project id")
         opts = options or {}
-        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "slots"}:
-            raise ToolError("options may contain only 'motion' (bool), 'framing' (object), 'plain_reason' (text) and 'slots' (style text)")
+        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "caption_spellings", "slots"}:
+            raise ToolError("options may contain only 'motion' (bool), 'framing' (object), 'plain_reason' (text) and 'slots' (style text)"
+                            + (" and 'caption_spellings' (object)" if spellings_on() else ""))
+        if "caption_spellings" in opts and not spellings_on():
+            raise ToolError("options may contain only 'motion' (bool), 'framing' (object) and 'plain_reason' (text); "
+                            + SPELLINGS_OFF)
+        spellings = check_spellings(opts["caption_spellings"]) if "caption_spellings" in opts else None
         cuts = runs_for(project_id, "apply_cuts", "done")
         if not cuts:
             raise ToolError("run apply_cuts for this project first and wait for it to finish (get_status)")
@@ -1348,11 +1413,16 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
                 raise ToolError("framing differs from the proof capture's framing; capture a new proof with this framing")
         edits = runs_for(project_id, "start_edit", "done")
         lang = cut["params"]["edit"].get("language") or (edits[-1]["result"]["language"] if edits else "auto")
+        if spellings is None and cut["params"].get("caption_spellings") is not None and spellings_on():
+            spellings = cut["params"]["caption_spellings"]
+        extra = {"caption_spellings": spellings} if spellings is not None else {}
+        if cut["params"]["edit"].get("vocabulary") and spellings_on():
+            extra["vocabulary"] = cut["params"]["edit"]["vocabulary"]
         with LOCK:
             if runs_for(project_id, state="running"):
                 raise ToolError("a run is already in progress for this project; call get_status(project_id)")
             params = {"cut": {"jobs": cut["result"]["jobs"], "run": cut["id"]}, "language": lang, "base_url": base_url(ctx), "proof": proof,
-                      "framing": opts.get("framing")}
+                      "framing": opts.get("framing"), **extra}
             if style_param:
                 params["style"] = style_param
             run = start_run("render_final", project_id, params, do_render_final)

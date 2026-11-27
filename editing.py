@@ -717,3 +717,121 @@ def delivery_word_review(edited_words, final_tokens):
             "limit": limit, "basis": ("The final audio is the edited WAV re-encoded; custody is proven separately by source-region "
                                       "correlation. Scattered lost words are ASR variance; fail on more than max(3, 5%) lost or "
                                       f"{DELIVERY_CLUSTER_WORDS} within {DELIVERY_CLUSTER_S} s.")}
+
+
+# ---------- caption spellings and recogniser names (switch caption-spellings, wizard-os#1021) ----------
+# The recogniser mishears names ("Pukwudgies" -> "PUG" "WUDGIES"). The editor passes {pattern: replacement}; a pattern is
+# one or more words, "a|b" gives alternatives. Matching is on the joined, case- and punctuation-free words, so
+# "pug wudgies" also matches "Pugwudgies" or "pug-wudgies", and a match may span two caption chunks: the words are fixed
+# BEFORE James' caption_layer.py chunks them. Only caption words change; the delivery gate keeps comparing the raw
+# edited-audio transcript with the final audio's transcript.
+
+SPELLINGS_MAX = 200
+SPELLING_WINDOW = 6          # at most this many recognised words fold into one replacement
+VOCABULARY_MAX = 100
+VOCABULARY_PROMPT_CHARS = 800  # whisper reads about the last 224 prompt tokens
+_TRAIL = ".,;:!?"
+
+
+def _printable(text):
+    return all(c.isprintable() for c in text)
+
+
+def parse_caption_spellings(value):
+    """Validate a caption_spellings object; return rules [{pattern, keys, words}] (raises Rejected)."""
+    if value is None:
+        return []
+    if not isinstance(value, dict) or not 1 <= len(value) <= SPELLINGS_MAX:
+        raise Rejected(f"caption_spellings must be an object of 1-{SPELLINGS_MAX} \"heard words\": \"Right Spelling\" pairs")
+    rules = []
+    for pattern, replacement in value.items():
+        if not isinstance(pattern, str) or not 1 <= len(pattern) <= 300 or not _printable(pattern):
+            raise Rejected(f"caption_spellings pattern {str(pattern)[:40]!r} must be 1-300 printable characters")
+        if not isinstance(replacement, str) or not 1 <= len(replacement.strip()) <= 80 or not _printable(replacement):
+            raise Rejected(f"caption_spellings[{pattern!r}] must be the right spelling: 1-80 printable characters")
+        words = replacement.split()
+        if not 1 <= len(words) <= SPELLING_WINDOW or not any(_norm(w) for w in words):
+            raise Rejected(f"caption_spellings[{pattern!r}] must be 1-{SPELLING_WINDOW} words with letters or digits")
+        keys = set()
+        for alt in pattern.split("|"):
+            parts = [p for p in alt.split() if _norm(p)]
+            if not 1 <= len(parts) <= SPELLING_WINDOW:
+                raise Rejected(f"caption_spellings pattern {pattern!r}: each '|' alternative needs 1-{SPELLING_WINDOW} words")
+            keys.add("".join(_norm(p) for p in parts))
+        rules.append({"pattern": pattern, "keys": keys, "words": words})
+    return rules
+
+
+def apply_caption_spellings(words, rules):
+    """Caption words [{word, start, end}] -> (fixed words, report). Longest match first; timings stay inside the matched
+    span, ordered and positive, so caption_layer.py accepts them."""
+    if not rules:
+        return words, {"applied": [], "unmatched": []}
+    out, applied, used, i = [], [], set(), 0
+    while i < len(words):
+        hit = None
+        for n in range(min(SPELLING_WINDOW, len(words) - i), 0, -1):
+            seg = words[i:i + n]
+            if not _norm(seg[0]["word"]) or not _norm(seg[-1]["word"]):
+                continue
+            key = "".join(_norm(w["word"]) for w in seg)
+            rule = next((r for r in rules if key in r["keys"]), None)
+            if rule:
+                hit = (n, rule)
+                break
+        if not hit:
+            out.append(words[i])
+            i += 1
+            continue
+        n, rule = hit
+        seg, reps = words[i:i + n], list(rule["words"])
+        trail = ""
+        last = str(seg[-1]["word"]).rstrip()
+        while last and last[-1] in _TRAIL:
+            trail, last = last[-1] + trail, last[:-1]
+        if trail and reps[-1][-1] not in _TRAIL:
+            reps[-1] += trail
+        start, end = float(seg[0]["start"]), float(seg[-1]["end"])
+        if len(reps) == n:
+            times = [(float(w["start"]), float(w["end"])) for w in seg]
+        else:
+            weights = [max(1, len(_norm(r))) for r in reps]
+            total, acc, times = sum(weights), 0, []
+            for k, wgt in enumerate(weights):
+                a = start + (end - start) * acc / total
+                acc += wgt
+                b = end if k == len(weights) - 1 else start + (end - start) * acc / total
+                times.append((a, b))
+        prev = out[-1]["start"] if out else 0.0
+        for r, (a, b) in zip(reps, times):
+            a = max(round(a, 3), prev)
+            b = max(round(b, 3), round(a + 0.001, 3))
+            out.append({"word": r, "start": a, "end": b})
+            prev = a
+        applied.append({"heard": " ".join(str(w["word"]) for w in seg), "caption": " ".join(reps),
+                        "edited_start_s": round(start, 3), "edited_end_s": round(end, 3), "pattern": rule["pattern"]})
+        used.add(rule["pattern"])
+        i += n
+    return out, {"applied": applied, "unmatched": [r["pattern"] for r in rules if r["pattern"] not in used]}
+
+
+def parse_vocabulary(value):
+    """Names the recogniser should expect (project list + show list). Returns the cleaned list (raises Rejected)."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or not 1 <= len(value) <= VOCABULARY_MAX:
+        raise Rejected(f"vocabulary must be a list of 1-{VOCABULARY_MAX} names or phrases")
+    out = []
+    for v in value:
+        if not isinstance(v, str) or not 1 <= len(v.strip()) <= 60 or not _printable(v) or not _norm(v):
+            raise Rejected("each vocabulary entry must be a name or phrase of 1-60 printable characters")
+        if v.strip() not in out:
+            out.append(v.strip())
+    if len(vocabulary_prompt(out)) > VOCABULARY_PROMPT_CHARS:
+        raise Rejected(f"vocabulary is too long for the recogniser (at most about {VOCABULARY_PROMPT_CHARS} characters)")
+    return out
+
+
+def vocabulary_prompt(vocabulary):
+    """The recogniser prompt (whisper initial prompt) that hints these spellings."""
+    return ("Names and terms: " + ", ".join(vocabulary) + ".") if vocabulary else ""
