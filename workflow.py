@@ -20,6 +20,7 @@ import wave
 
 from editing import DURATION_TOLERANCE_S, Rejected
 import motion
+import styles
 import transcriber
 
 UPSTREAM_ROOT = Path(os.environ.get("DEFLEUR_ROOT") or ("/opt/defleur" if Path("/opt/defleur").is_dir() else Path(__file__).with_name("defleur")))
@@ -325,6 +326,25 @@ def _render_refs(value, lookup):
         lookup(value["preset_job"], {"resolve-preset"})
 
 
+def _style_input(value):
+    """final-render's optional 'style' (wizard-os#1012): a resolved style pack (styles.resolve) + the Short's slot text,
+    join points (source seconds) and, for window layouts with inserts, the motion submission it renders."""
+    _obj(value, {"id", "version", "sha256", "spec"}, {"slots", "joins", "composition_sha256"})
+    spec = value["spec"]
+    if not isinstance(spec, dict) or spec.get("schema") != styles.SCHEMA or spec.get("id") != value["id"] \
+            or str(spec.get("version")) != str(value["version"]) or not re.fullmatch(r"[a-f0-9]{64}", str(value["sha256"])):
+        raise Rejected("style must be a resolved style pack (styles.resolve)")
+    try:
+        styles.check_resolved(spec)
+        styles.check_slots(spec, value.get("slots") or {})
+        styles.check_joins(value.get("joins"))
+    except styles.StyleError as e:
+        raise Rejected(f"style {value['id']} v{value['version']}: {e}") from None
+    if "composition_sha256" in value and not re.fullmatch(r"[a-f0-9]{64}", str(value["composition_sha256"])):
+        raise Rejected("style.composition_sha256 must be the submitted plan's hash")
+    return value
+
+
 def validate(stage, value, metadata, lookup):
     """Fast 422 checks at submit time. lookup(jid, stages) -> (job, dir) or raises."""
     if stage not in STAGES or not isinstance(value, dict):
@@ -443,8 +463,12 @@ def validate(stage, value, metadata, lookup):
         if value["mode"] not in ("smoke", "proof"):
             raise Rejected("motion-capture mode must be smoke or proof (full capture runs inside final-render)")
     elif stage == "final-render":
-        _obj(value, {"assemble_job", "crop_job", "edited_asr_job"}, {"preset_job", "proof_job"})
+        _obj(value, {"assemble_job", "crop_job", "edited_asr_job"}, {"preset_job", "proof_job", "style"})
         _render_refs(value, lookup)
+        if "style" in value:
+            _style_input(value["style"])
+            if value["style"]["spec"]["layout"]["mode"] == "window" and "proof_job" in value:
+                raise Rejected("a window-layout style renders its inserts itself; final-render takes no proof_job with it")
         if "proof_job" in value:
             proof, _ = lookup(value["proof_job"], {"motion-capture"})
             ps = proof["result"]["summary"]
@@ -904,6 +928,9 @@ def _final_render(ctx, value, source, metadata):
                                        "word_source": "Transcriber ASR of the edited audio (apply_cuts' edited-asr job)",
                                        "timing_adjustments": adjusted})
     work = cap_checks = proof = None
+    chosen = value.get("style")
+    if chosen and chosen["spec"]["layout"]["mode"] == "window":
+        return _window_render(ctx, value, source, chosen, style, mapped, words, edit_map, lap, phases, frames)
     if use_motion:
         proof, _ = ctx.lookup(value["proof_job"], {"motion-capture"})
         ctx.source = source
@@ -998,7 +1025,9 @@ def _final_render(ctx, value, source, metadata):
     ctx.write("final-integrity.json", integrity)
     face = json.loads((root / "face-audit.json").read_text())
     lap("summary")
-    return {"phase_seconds": phases,"assemble_job": value["assemble_job"], "crop_job": value["crop_job"], "width": verified["width"], "height": verified["height"],
+    style_info = {"style": {"id": chosen["id"], "version": chosen["version"], "sha256": chosen["sha256"], "layout": "crop",
+                            "slots": chosen.get("slots") or {}}} if chosen else {}
+    return {**style_info, "phase_seconds": phases,"assemble_job": value["assemble_job"], "crop_job": value["crop_job"], "width": verified["width"], "height": verified["height"],
             "frames": verified["frames"], "fps": verified["fps"], "duration_s": round(verified["audio_duration"], 3),
             "final_sha256": verified["sha256"], "final_bytes": (root / "final.mp4").stat().st_size,
             "captions": {"cues": live.get("caption_cues"), "words": len(words), "frames_with_cue": live["cue_on_frames"],
@@ -1012,6 +1041,108 @@ def _final_render(ctx, value, source, metadata):
                 "no_motion_outside_planned_windows": live["no_motion_outside_planned_windows"],
                 "beats_show_motion": live["beats_show_motion"], "inserts_show_media": live["inserts_show_media"],
                 "captions_suppressed_where_declared": live["captions_suppressed_where_declared"], "motion_check_pass": live["pass"]}}
+
+
+def _window_render(ctx, value, source, chosen, house_style, mapped, words, edit_map, lap, phases, frames):
+    """A window-layout style pack (wizard-os#1012): app-original style_render.py composes, captions, finishes and encodes;
+    James' encode.py --verify-only, the decode/framemd5/audio-region custody and the delivery gate stay the same."""
+    root = ctx.root
+    spec = chosen["spec"]
+    style = styles.caption_style(spec, house_style)
+    ctx.write("caption-style.json", style)
+    project = root.parent
+    plan, assets = {"beats": [], "inserts": [], "note": "window style: no inserts submitted"}, None
+    if chosen.get("composition_sha256"):
+        st = motion.status(project)
+        if not st["submitted"] or st["composition_sha256"] != chosen["composition_sha256"]:
+            raise Rejected("the submitted insert plan changed since this render was requested; render again")
+        plan = motion.validate_plan_native(st["plan"], float(mapped["duration"]), {r["path"] for r in st["files"]})
+        problems = styles.pacing_problems(plan, spec, float(mapped["duration"]))
+        if problems:
+            raise Rejected("the insert plan breaks this style's pacing: " + "; ".join(problems))
+        assets = ctx.root.with_suffix(".assets")
+        shutil.rmtree(assets, ignore_errors=True)
+        assets.mkdir(mode=0o700)
+        motion.materialize(project, assets)
+    elif (spec.get("inserts") or {}).get("pacing", {}).get("required"):
+        raise Rejected("this style needs its image inserts: submit_motion the insert plan first")
+    ctx.write("visual-plan.json", plan)
+    ctx.write("style-input.json", {"id": chosen["id"], "version": chosen["version"], "sha256": chosen["sha256"], "spec": spec,
+                                   "slots": chosen.get("slots") or {}, "joins": chosen.get("joins") or [],
+                                   "assets": str(assets) if assets else None})
+    helper("caption_layer")
+    ctx.used["caption_layer"] = HELPERS["caption_layer"][1]
+    caption_dir = helper("encode").parent
+    big = dict(timeout=7200, cpu=28800, as_limit=6 * 1024**3, nofile=256, file_limit=8 * 1024**3, max_log=1024 * 1024, threads="2")
+    try:
+        lap("setup")
+        ctx.progress("style-compose-captions-encode", style=f"{chosen['id']} v{chosen['version']}")
+        ctx.app("style_render.py", ["render", source, edit_map, root, root / "style-input.json", "--caption-dir", caption_dir], **big)
+        lap("style_render_compose_encode")
+    finally:
+        if assets is not None:
+            shutil.rmtree(assets, ignore_errors=True)
+    ctx.progress("encode-verify")
+    code, out, err = ctx.run("encode", [root, "--verify-only"], flags=("-s", "-E"), check=False, **big)
+    lap("encode_py_verify_only")
+    if code:
+        raise Rejected("encode.py --verify-only failed: " + _tail(err))
+    verified = json.loads(out)
+    ctx.progress("style-pixel-check")
+    ctx.app("style_render.py", ["check", source, edit_map, root, root / "style-input.json", "--caption-dir", caption_dir],
+            timeout=1200, cpu=2400, as_limit=4 * 1024**3, nofile=128, file_limit=64 * 1024**2, threads="2")
+    lap("style_pixel_check")
+    ctx.progress("decode-check")
+    with wave.open(str(root / "edited.wav")) as w:
+        channels = w.getnchannels()
+    ctx.native(["/usr/bin/ffmpeg", "-v", "error", "-xerror", "-n", "-threads", "1", "-i", root / "final.mp4", "-map", "0:a:0",
+                "-c:a", "pcm_s16le", "-ar", "48000", "-ac", str(channels), root / "final-audio.wav"],
+               timeout=300, cpu=600, file_limit=1024**3, as_limit=2 * 1024**3, cwd=root)
+    md5 = ctx.native(["/usr/bin/ffmpeg", "-v", "error", "-xerror", "-threads", "1", "-i", root / "final.mp4", "-map", "0:v:0",
+                      "-f", "framemd5", "-"], timeout=900, cpu=1800, as_limit=2 * 1024**3, max_log=8 * 1024 * 1024, cwd=root)
+    frame_hashes = [line.rsplit(",", 1)[1].strip() for line in md5.decode().splitlines() if line and not line.startswith("#")]
+    regions = json.loads(ctx.app("final_render.py", ["regions", root / "source.wav", root / "final-audio.wav", edit_map],
+                                 timeout=300, cpu=600, as_limit=4 * 1024**3, nofile=64))
+    lap("full_decode_framemd5_audio_regions")
+    live = json.loads((root / "live-check.json").read_text())
+    capture = json.loads((root / "capture-full.json").read_text())
+    ledger = json.loads((root / "layout-ledger.json").read_text())
+    with wave.open(str(root / "final-audio.wav")) as w:
+        final_samples = w.getnframes()
+    ctx.write("decoded-final.json", {"final_sha256": sha(root / "final.mp4"), "video_frames_decoded": len(frame_hashes),
+                                     "video_framemd5_sha256": __import__("hashlib").sha256("\n".join(frame_hashes).encode()).hexdigest(),
+                                     "audio_pcm": "final-audio.wav", "audio_pcm_sha256": sha(root / "final-audio.wav"),
+                                     "audio_samples": final_samples, "decoder": "ffmpeg -xerror (framemd5 + PCM s16 48 kHz)"})
+    picture_ok = (live["pass"] and capture["indices"] == list(range(mapped["frames"]))
+                  and len(frame_hashes) == mapped["frames"] == verified["frames"])
+    integrity = {"full_decode_pass": verified["full_decode_pass"] is True and len(frame_hashes) == mapped["frames"],
+                 "caption_bounds_pass": live["caption_band_changes_with_cues"], "picture_map_verified": bool(picture_ok),
+                 "source_regions": regions, "media_verification_sha256": sha(root / "media-verification.json"),
+                 "picture_check": "live-check.json", "picture_check_sha256": sha(root / "live-check.json"),
+                 "layout_ledger_sha256": sha(root / "layout-ledger.json"),
+                 "scope": "style_render.py window layout: encode.py --verify-only, full FFmpeg decode, decoded-pixel window/layer/caption/"
+                          "insert checks, loudness and source-region audio correlation; machine evidence, not a viewing or listening review."}
+    ctx.write("final-integrity.json", integrity)
+    face = json.loads((root / "face-audit.json").read_text())
+    lap("summary")
+    inserts = plan.get("inserts", [])
+    return {"phase_seconds": phases, "assemble_job": value["assemble_job"], "crop_job": value["crop_job"], "width": verified["width"],
+            "height": verified["height"], "frames": verified["frames"], "fps": verified["fps"], "duration_s": round(verified["audio_duration"], 3),
+            "final_sha256": verified["sha256"], "final_bytes": (root / "final.mp4").stat().st_size,
+            "captions": {"cues": live.get("caption_cues"), "words": len(words), "frames_with_cue": live["cue_on_frames"],
+                         "font": style["font_path"], "timing_adjustments": 0},
+            "crop": {"setups": face["setups"], "face_pass": face["pass"], "flags": face["flags"]},
+            "checks": {"full_decode": integrity["full_decode_pass"], "caption_bounds_and_band": integrity["caption_bounds_pass"],
+                       "crop_matches_ledger": live["window_matches_layout"], "picture_map_verified": integrity["picture_map_verified"],
+                       "text_layers_every_frame": live["text_layers_every_sampled_frame"], "inserts_in_box": live["inserts_in_box"],
+                       "background_outside_layout": live["background_outside_layout"], "loudness_on_target": live["loudness_on_target"],
+                       "min_source_region_correlation": min(r["correlation"] for r in regions)},
+            "style": {"id": chosen["id"], "version": chosen["version"], "sha256": chosen["sha256"], "layout": "window",
+                      "slots": ledger["slots"], "text_layers": ledger["text_layers"], "punched_frames": ledger["punched_frames"],
+                      "joins": chosen.get("joins") or [], "loudness": live["loudness"], "finish": ledger["finish"]},
+            "motion_layer": {"style_layout": "window", "inserts": len(inserts), "beats": 0, "insert_box": ledger["insert_box"],
+                             "composition_sha256": chosen.get("composition_sha256"), "inserts_show_media": {
+                                 r["asset"]: live["inserts_in_box"] for r in inserts}, "motion_check_pass": live["pass"]}}
 
 
 # ---------- motion graphics (James' piece 3) ----------

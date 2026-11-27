@@ -181,6 +181,33 @@ def validate_plan(plan, duration: float | None, files: set[str]) -> dict:
     return plan
 
 
+def validate_plan_native(plan, duration: float | None, files: set[str]) -> dict:
+    """A window-layout style's plan (wizard-os#1012): no HTML page and no beats, only still-image inserts the app draws
+    itself in the style's insert box. Same insert rules as validate_plan; beats must be empty."""
+    if not isinstance(plan, dict) or set(plan) - {"beats", "inserts", "notes"}:
+        raise Rejected("this style's plan is {beats: [], inserts: [...], notes?}: no caption_suppress or caption_emphasis")
+    if plan.get("beats", []) != []:
+        raise Rejected("this style has no motion-graphics beats: send beats: [] and the image inserts")
+    ins = plan.get("inserts", [])
+    if not isinstance(ins, list) or len(ins) > 50:
+        raise Rejected("plan.inserts must be a list of up to 50 image inserts")
+    last = 0.0
+    for i, r in enumerate(ins):
+        if not isinstance(r, dict) or set(r) - {"start", "end", "asset", "fit", "reason"}:
+            raise Rejected(f"insert {i}: keys start, end, asset, fit ('contain'), reason")
+        s, e = _num(r.get("start"), f"insert {i} start"), _num(r.get("end"), f"insert {i} end")
+        if not last <= s < e or (duration is not None and e > duration + 1e-6):
+            raise Rejected(f"insert {i}: inserts must be ordered, non-overlapping and inside the edited timeline")
+        last = e
+        _text(r.get("reason"), f"insert {i} reason")
+        a = r.get("asset")
+        if a not in files or Path(a).suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+            raise Rejected(f"insert {i}: asset must be an uploaded .png/.jpg/.webp still in this project (have: {sorted(files)[:20]})")
+        if r.get("fit", "contain") != "contain":
+            raise Rejected(f"insert {i}: this style contain-fits images in its box (fit 'contain')")
+    return plan
+
+
 def lint(staging: Path) -> list[str]:
     """Light checks only. capture.cjs checks the real contract at runtime (renderFrame, #live, sourceFrameForOutputFrame)
     and the smoke capture reports any failure in plain words. Returns advisory warnings."""
@@ -199,8 +226,9 @@ def lint(staging: Path) -> list[str]:
     return warnings
 
 
-def submit(project: Path, files, plan, duration: float, replace: bool = True) -> dict:
-    """Write inline files (text, or {'base64': ...} for small binaries) and the plan. Uploaded assets stay unless replaced."""
+def submit(project: Path, files, plan, duration: float, replace: bool = True, native: bool = False) -> dict:
+    """Write inline files (text, or {'base64': ...} for small binaries) and the plan. Uploaded assets stay unless replaced.
+    native: a window-layout style's insert plan (no index.html, no beats; the app draws the inserts)."""
     import base64
     if not isinstance(files, dict) or len(files) > MAX_FILES:
         raise Rejected(f"files must be an object of up to {MAX_FILES} path -> content entries")
@@ -226,7 +254,7 @@ def submit(project: Path, files, plan, duration: float, replace: bool = True) ->
     root = src_dir(project)
     existing = {r["path"] for r in tree(project)}
     keep = existing if not replace else {p for p in existing if Path(p).suffix in BINARY_KINDS and p not in decoded}
-    validate_plan(plan, duration, set(decoded) | keep)
+    (validate_plan_native if native else validate_plan)(plan, duration, set(decoded) | keep)
     staging = project / "motion" / "src.new"
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, mode=0o700)
@@ -239,14 +267,17 @@ def submit(project: Path, files, plan, duration: float, replace: bool = True) ->
     for rel, data in decoded.items():
         (staging / rel).parent.mkdir(parents=True, exist_ok=True)
         (staging / rel).write_bytes(data)
-    if not (staging / "index.html").is_file():
+    if native:
+        warnings = []
+    elif not (staging / "index.html").is_file():
         shutil.rmtree(staging)
         raise Rejected("the composition needs index.html")
-    try:
-        warnings = lint(staging)
-    except Rejected:
-        shutil.rmtree(staging)
-        raise
+    else:
+        try:
+            warnings = lint(staging)
+        except Rejected:
+            shutil.rmtree(staging)
+            raise
     shutil.rmtree(root, ignore_errors=True)
     staging.rename(root)
     (project / "motion" / "plan.json").write_text(json.dumps(plan, indent=2))
@@ -293,7 +324,7 @@ def status(project: Path) -> dict:
         return {"submitted": False, "files": rows}
     plan = json.loads(plan_file.read_text())
     return {"submitted": True, "files": rows, "plan": plan, "composition_sha256": tree_hash(rows, plan),
-            "beats": len(plan["beats"]), "inserts": len(plan.get("inserts", [])),
+            "beats": len(plan.get("beats", [])), "inserts": len(plan.get("inserts", [])),
             "caption_suppress": len(plan.get("caption_suppress", []))}
 
 

@@ -30,7 +30,7 @@ Published amd64 image: `ghcr.io/humanitylabs-org/defleur-video:0.4.0-testing` (l
 
 ## MCP endpoint (agents)
 
-`/mcp` on port 8787 serves MCP over Streamable HTTP. It is the official `mcp` SDK 2.0.0 (`mcp_server.py`) running on loopback port 8788, started by `service.py`, which proxies `/mcp` to it. When `VIDEO_API_TOKEN` is set, the same bearer auth applies. The 8 tools (`workflow_guide`, `capabilities`, `create_upload`, `start_edit`, `apply_cuts`, `get_status`, `list_projects`, `delete_project`) call the HTTP API below on loopback, and their descriptions tell the agent the order to call them in. To connect Hermes, see [HERMES.md](HERMES.md).
+`/mcp` on port 8787 serves MCP over Streamable HTTP. It is the official `mcp` SDK 2.0.0 (`mcp_server.py`) running on loopback port 8788, started by `service.py`, which proxies `/mcp` to it. When `VIDEO_API_TOKEN` is set, the same bearer auth applies. The tools (`workflow_guide`, `capabilities`, `create_upload`, `start_edit`, `apply_cuts`, `get_status`, `list_projects`, `delete_project`, the motion tools, and the style-pack tools `list_styles`, `install_style`, `test_style`, `retire_style`; see RELEASE.md 0.9.0) call the HTTP API below on loopback, and their descriptions tell the agent the order to call them in. To connect Hermes, see [HERMES.md](HERMES.md).
 
 Routes added for it: `POST /v1/uploads` returns a one-time path. `POST /v1/uploads/<token>` takes the video body with no other credential and is single-use, expiring after 30 min. `GET /upload` is a minimal browser upload page, and `GET /v1/projects` lists projects. HEVC or variable-frame-rate uploads are normalized to H.264 CFR, and the project records `original.sha256` and `normalization`.
 

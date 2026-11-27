@@ -13,6 +13,8 @@
 !SKILL.md
 !face_audit.py
 !final_render.py
+!styles.py
+!style_render.py
 !motion.py
 !motion_frames.py
 !capture/package.json

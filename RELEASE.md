@@ -1,3 +1,31 @@
+# Release: 0.9.0 (editing styles: style packs, the window layout, a style per project)
+
+For humanitylabs-org/wizard-os#1012 (Clips Pipeline: choose a Shorts style, make both, split-test them).
+
+- **Style packs (`styles.py`).** A pack is data in `<style-id>/<version>/`: `style.json` (schema `defleur-video-style/1`: id, name,
+  author, version, preset overlay, layout, text layers and slots, insert box and pacing, joined-range punch-in, output finish, agent
+  rule overrides, 1-3 references), `STYLE.md` (the agent's editing guide for the style) and optional `references/`. Validation refuses
+  unknown keys, fonts not installed here, anything that isn't data (scripts, other files) and anything the renderer can't draw yet
+  (Ken Burns, transitions, other caption animations, caption-free stretches, moving-video inserts in a window), each with one plain
+  reason. Installed under `/data/styles`; a version is offered only after its reference test render passes; retiring hides it and
+  never touches past edits. `defleur-house` is built in: today's preset (same hash) and today's rules.
+- **MCP.** `capabilities.styles` and `workflow_guide(style=...)` list styles and give a style's STYLE.md plus the rules it replaces;
+  `start_edit(..., style, style_version, joins)` records the style on the project; `submit_motion` checks a window style's insert
+  pacing; `render_final({'slots': {...}})` takes the approved title/tagline. New maintainer tools: `list_styles`, `install_style`,
+  `test_style` (the fixed reference test render), `retire_style`.
+- **Window layout (`style_render.py`, app-original).** 16:9 footage contain-fitted into the pack's window on a background canvas with
+  an optional light grade, a punch-in after a joined range, still-image inserts contain-fitted into the pack's image box with fades,
+  persistent text layers (fixed text and per-Short slots), karaoke captions (active-word colour, first-word pop, top-anchored band),
+  the whole-picture fade and the audio finish (fades, gain to the loudness target with a 4x-oversampled limiter under the true-peak
+  ceiling, sample-exact length). James' `encode.py --verify-only`, the decode/framemd5/source-region checks and the delivery gate run
+  unchanged on it; `live-check.json` holds decoded-pixel window/layer/caption/insert checks and the measured loudness.
+- **Fonts.** Playfair Display Italic and Cormorant Garamond (+ Italic), SIL OFL, from google/fonts at a pinned commit with hashes.
+- **Nothing changes without a style.** House renders are byte-identical (same final SHA-256 on the same input with and without this
+  release), `start_edit`'s house result keeps exactly its keys, and the house rules text is unchanged.
+- Tests: `test_style_pack_validation_refuses_with_plain_reasons`, `test_style_registry_house_default_test_gate_and_retire`,
+  `test_style_rules_replace_house_text_only_when_a_style_is_chosen`, `test_style_pacing_and_slots_refused_with_reasons`,
+  `test_style_reference_test_render_window_layers_inserts_captions_finish`, `test_window_style_final_render_stage_and_house_untouched`.
+
 # Release: 0.8.0 (arm64 image; capture and final render can run on a render worker)
 
 For wizard-os#997 (Company Clips Shorts render on the Mac render worker, several at once).
