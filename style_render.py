@@ -32,7 +32,9 @@ from pathlib import Path
 FFMPEG, FFPROBE = "ffmpeg", "ffprobe"
 
 
-def rgb(hex_color: str) -> tuple[int, int, int]:
+def hex_rgb(hex_color: str | None, default=(0, 0, 0)) -> tuple[int, int, int]:
+    if not hex_color:
+        return default
     h = hex_color.lstrip("#")
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
@@ -147,7 +149,7 @@ def layers_overlay(spec: dict, slots: dict, size=(1080, 1920)):
     for layer in spec.get("text_layers", []):
         spacing = layer.get("letter_spacing_px", 0)
         stroke = layer.get("outline_width_px", 0)
-        sfill = rgb(layer["outline_color"]) + (255,) if layer.get("outline_color") else None
+        sfill = hex_rgb(layer["outline_color"]) + (255,) if layer.get("outline_color") else None
         if layer["kind"] == "slot":
             text = str(slots.get(layer["slot"], "")).strip()
             if not text:
@@ -165,9 +167,9 @@ def layers_overlay(spec: dict, slots: dict, size=(1080, 1920)):
                 if size_px < layer["size_px"] * 0.6:
                     raise SystemExit(f"text layer {layer['id']}: {text!r} doesn't fit {layer['max_lines']} line(s) of "
                                      f"{layer['max_width_px']} px even at 60% size; shorten it")
-            runs_by_line = [[(ln, font, rgb(layer["color"]))] for ln in lines]
+            runs_by_line = [[(ln, font, hex_rgb(layer["color"]))] for ln in lines]
         else:
-            runs = [((r["text"].upper() if layer.get("uppercase") else r["text"]), T.font(r["font_path"], layer["size_px"]), rgb(r["color"]))
+            runs = [((r["text"].upper() if layer.get("uppercase") else r["text"]), T.font(r["font_path"], layer["size_px"]), hex_rgb(r["color"]))
                     for r in layer["runs"]]
             runs_by_line = [runs]
         asc_desc = [max(sum(f.getmetrics()) for _, f, _ in line) for line in runs_by_line]
@@ -216,7 +218,7 @@ class Captions:
         self.size = int(style["font_size_px"])
         self.outline = int(style.get("outline_width_px", 0))
         self.upper = bool(style.get("uppercase", False))
-        self.colors = rgb(style["text_color"]), rgb(style["active_color"]), rgb(style["outline_color"])
+        self.colors = hex_rgb(style["text_color"]), hex_rgb(style["active_color"]), hex_rgb(style["outline_color"])
         self.pop_from = float(style.get("pop_from_scale", 1.0))
         self.pop_s = float(style.get("pop_ms", 0)) / 1000.0
         self.anchor = style.get("anchor", "center")
@@ -357,7 +359,7 @@ class Layout:
         self.Image = Image
         self.spec = spec
         lay = spec["layout"]
-        self.bg = rgb(lay.get("background", "#000000"))
+        self.bg = hex_rgb(lay.get("background"))
         self.rect = lay["rect"]
         self.grade = lay.get("grade") or {}
         self.punch = (spec.get("joins") or {}).get("punch_in", 1.0)
@@ -366,7 +368,7 @@ class Layout:
         self.fps = fps
         ins = spec.get("inserts") or {}
         self.box = ins.get("box")
-        self.box_bg = rgb(ins.get("background", "#000000"))
+        self.box_bg = hex_rgb(ins.get("background"))
         self.fi, self.fo = float(ins.get("fade_in_s", 0)), float(ins.get("fade_out_s", 0))
         self.inserts = []
         for r in (plan or {}).get("inserts", []):
@@ -564,7 +566,7 @@ def check(a) -> None:
     W, H = probe_size(a.source)
     rx, ry, rw, rh = ledger["rect"]
     fw, fh, ox, oy = ledger["fit"]
-    bg = np.array(rgb(ledger.get("background") or "#000000"), np.int16)
+    bg = np.array(hex_rgb(ledger.get("background")), np.int16)
     box = ledger.get("insert_box")
     lay_fi, lay_fo = [float(x) for x in ledger.get("insert_fades_s") or (0.0, 0.0)]
     ins = ledger.get("inserts", [])

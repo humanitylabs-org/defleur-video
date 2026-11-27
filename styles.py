@@ -149,7 +149,7 @@ def _text(v, label, n=200):
 
 def _color(v, label):
     if not isinstance(v, str) or not COLOR_RE.fullmatch(v):
-        raise StyleError(f"{label} must be a colour like #B59662")
+        raise StyleError(f"{label} must be a colour written as # and 6 hex digits (RRGGBB)")
     return v.upper()
 
 
@@ -279,7 +279,7 @@ def validate_spec(spec, files: dict | None = None) -> dict:
     out["layout"] = {"mode": mode}
     if window:
         out["layout"]["rect"] = _rect(layout.get("rect"), "layout.rect")
-        out["layout"]["background"] = _color(layout.get("background", "#000000"), "layout.background")
+        out["layout"]["background"] = _color(layout["background"], "layout.background") if "background" in layout else None
         if "grade" in layout:
             _keys(layout["grade"], {"contrast", "saturation"}, "layout.grade")
             out["layout"]["grade"] = {k: _num(v, f"layout.grade.{k}", 0.5, 1.5) for k, v in layout["grade"].items()}
@@ -331,7 +331,7 @@ def validate_spec(spec, files: dict | None = None) -> dict:
         if ins.get("media", ["image"]) != ["image"]:
             raise StyleError("inserts.media: the renderer can only draw still images in an insert box yet")
         r = {"box": _rect(ins.get("box"), "inserts.box"), "fit": "contain",
-             "background": _color(ins.get("background", "#000000"), "inserts.background"),
+             "background": _color(ins["background"], "inserts.background") if "background" in ins else None,
              "fade_in_s": _num(ins.get("fade_in_s", 0), "inserts.fade_in_s", 0, 2),
              "fade_out_s": _num(ins.get("fade_out_s", 0), "inserts.fade_out_s", 0, 2), "media": ["image"]}
         if "pacing" in ins:
