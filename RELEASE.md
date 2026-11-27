@@ -18,6 +18,9 @@ For wizard-os#997 (Company Clips Shorts render on the Mac render worker, several
 - **Nothing changes without a runner.** With no runner asking for work, the worker, the two-job queue and every
   result are exactly as in 0.7.2. While a runner is live, the queue gets room for its slots (parallel Shorts), and
   `get_status` / `render_final` / `capture_motion` name the `render_host`.
+- **House-look check per architecture.** CI renders the same motion Short (`scripts/render_smoke.py`: proof capture
+  through the Browser app's pinned headless Chromium, then final render) on amd64 and on arm64 and fails unless the
+  two finals have the same size and length and decode to the same picture (average PSNR >= 40 dB).
 - Tests: `test_remote_stage_round_trip_matches_a_local_render` (same artifact hashes as a local render),
   `test_remote_stage_given_back_tampered_or_silent_renders_here`, `test_remote_queue_room_only_while_a_runner_is_live`.
 

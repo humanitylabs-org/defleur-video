@@ -45,6 +45,27 @@ jobs:
         run: |
           VIDEO_IMAGE=defleur-video:ci TMPDIR="$RUNNER_TEMP" sh test-container.sh
           test "$(docker image inspect -f '{{.Architecture}}' defleur-video:ci)" = '${{ matrix.arch }}'
+      - name: Render one motion Short on this architecture (house-look check)
+        run: |
+          OUT="$RUNNER_TEMP/smoke-${{ matrix.arch }}"
+          docker network create smoke
+          docker run -d --name smoke-transcriber --network smoke -v "$PWD/scripts/render_smoke.py:/s.py:ro" \
+            --entrypoint /usr/bin/python3 defleur-video:ci /s.py serve-transcriber
+          # The Browser app's pinned engine (humanitylabs-org/browser), multi-arch.
+          docker run -d --name smoke-browser --network smoke --user 1000:1000 --init --shm-size 2g -e HOME=/tmp \
+            chromedp/headless-shell:155.0.8059.40@sha256:0dc9356ce1428962cddcf938dab712a8c56de79adc326f9138298f13df440071
+          docker run -d --name smoke-defleur --network smoke -p 127.0.0.1:8787:8787 --cpus 2 --memory 3200m \
+            -e VIDEO_BIND=0.0.0.0 -e TRANSCRIBER_URL=http://smoke-transcriber:8000 -e BROWSER_URL=http://smoke-browser:9222 \
+            -e TRANSCRIBER_MODEL=Systran/faster-whisper-small defleur-video:ci
+          docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP:/out" --entrypoint /usr/bin/ffmpeg defleur-video:ci \
+            -loglevel error -f lavfi -i testsrc2=size=1920x1080:rate=24 -f lavfi -i sine=frequency=220:sample_rate=48000 \
+            -t 12 -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -movflags +faststart /out/source.mp4
+          for i in $(seq 60); do curl -fs 127.0.0.1:8787/healthz >/dev/null && break; sleep 2; done
+          python3 scripts/render_smoke.py render http://127.0.0.1:8787 "$RUNNER_TEMP/source.mp4" "$OUT" || { docker logs --tail 50 smoke-defleur; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.arch }}
+          path: ${{ runner.temp }}/smoke-${{ matrix.arch }}
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request'
         with:
@@ -57,8 +78,28 @@ jobs:
           V='${{ steps.v.outputs.version }}'
           docker tag defleur-video:ci "ghcr.io/humanitylabs-org/defleur-video-app:$V-${{ matrix.arch }}"
           docker push "ghcr.io/humanitylabs-org/defleur-video-app:$V-${{ matrix.arch }}"
-  publish:
+  look:
+    # The same motion Short rendered on amd64 and on arm64 must look the same (decoded frames, same size and length).
     needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: smoke
+      - name: Compare the amd64 and arm64 renders
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          cat smoke/smoke-amd64/summary.json smoke/smoke-arm64/summary.json
+          python3 - <<'EOF'
+          import json
+          a, b = (json.load(open(f'smoke/smoke-{x}/summary.json')) for x in ('amd64', 'arm64'))
+          assert (a['width'], a['height'], a['frames']) == (b['width'], b['height'], b['frames']), (a, b)
+          print('byte-identical' if a['final_sha256'] == b['final_sha256'] else 'bytes differ; checking decoded frames')
+          EOF
+          ffmpeg -i smoke/smoke-amd64/final.mp4 -i smoke/smoke-arm64/final.mp4 -lavfi "[0:v][1:v]psnr" -f null - 2>&1 | tee psnr.txt | tail -1
+          python3 -c "import re,sys; t=open('psnr.txt').read(); m=re.search(r'average:(inf|[0-9.]+)', t); v=float('inf') if m.group(1)=='inf' else float(m.group(1)); print('average PSNR', v); sys.exit(0 if v >= 40 else 1)"
+  publish:
+    needs: [image, look]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
