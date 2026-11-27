@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Render one motion Short end to end against a running DeFleur, for the per-architecture look check in CI.
 
-Usage: render_smoke.py serve-transcriber            (fake Transcriber on :8000, fixed words; run inside the image)
-       render_smoke.py render <api-url> <source.mp4> <out-dir>
+Usage: test-render-smoke.py serve-transcriber            (fake Transcriber on :8000, fixed words; run inside the image)
+       test-render-smoke.py render <api-url> <source.mp4> <out-dir>
 Stages: source-audio, asr, pcm-assemble, asr, face-crop, submit motion, motion-capture proof, final-render with the
 proof. Writes <out-dir>/final.mp4 and summary.json. The image jobs run it on amd64 and arm64 and the parity job
 compares the two finals (wizard-os#997: the Mac's arm64 Shorts must look like the Company's amd64 ones).

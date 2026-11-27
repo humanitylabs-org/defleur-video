@@ -49,7 +49,7 @@ jobs:
         run: |
           OUT="$RUNNER_TEMP/smoke-${{ matrix.arch }}"
           docker network create smoke
-          docker run -d --name smoke-transcriber --network smoke -v "$PWD/scripts/render_smoke.py:/s.py:ro" \
+          docker run -d --name smoke-transcriber --network smoke -v "$PWD/scripts/test-render-smoke.py:/s.py:ro" \
             --entrypoint /usr/bin/python3 defleur-video:ci /s.py serve-transcriber
           # The Browser app's pinned engine (humanitylabs-org/browser), multi-arch.
           docker run -d --name smoke-browser --network smoke --user 1000:1000 --init --shm-size 2g -e HOME=/tmp \
@@ -61,7 +61,7 @@ jobs:
             -loglevel error -f lavfi -i testsrc2=size=1920x1080:rate=24 -f lavfi -i sine=frequency=220:sample_rate=48000 \
             -t 12 -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -movflags +faststart /out/source.mp4
           for i in $(seq 60); do curl -fs 127.0.0.1:8787/healthz >/dev/null && break; sleep 2; done
-          python3 scripts/render_smoke.py render http://127.0.0.1:8787 "$RUNNER_TEMP/source.mp4" "$OUT" || { docker logs --tail 50 smoke-defleur; exit 1; }
+          python3 scripts/test-render-smoke.py render http://127.0.0.1:8787 "$RUNNER_TEMP/source.mp4" "$OUT" || { docker logs --tail 50 smoke-defleur; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: smoke-${{ matrix.arch }}
