@@ -32,7 +32,7 @@ import secrets
 from typing import cast
 from editing import DURATION_TOLERANCE_S, Rejected, validate_options, validate_transcript, visual_filters, review_artifacts
 
-VERSION = "0.9.0"
+VERSION = "0.10.0"
 UPSTREAM = "30768288eb1308b18216a5df5eb4648fbce3e55b"
 MAX_UPLOAD = 8 * 1024 * 1024 * 1024
 MAX_PROJECTS = 8
@@ -1479,12 +1479,15 @@ class Handler(BaseHTTPRequestHandler):
                         server.asset_uploads[token] = (parts[3], rel, time.time() + UPLOAD_TTL)
                     return self.send(201, {"path": "/v1/asset-uploads/" + token, "asset_path": rel, "expires_in_s": UPLOAD_TTL,
                                            "max_bytes": motion.MAX_ASSET[Path(rel).suffix], "one_time": True})
-                if not isinstance(value, dict) or set(value) - {"files", "plan", "replace"} or "plan" not in value:
-                    raise Rejected("body must be {files: {path: text|{base64}}, plan: {...}, replace?: bool}")
+                if not isinstance(value, dict) or set(value) - {"files", "plan", "replace", "native"} or "plan" not in value:
+                    raise Rejected("body must be {files: {path: text|{base64}}, plan: {...}, replace?: bool, native?: bool}")
                 with store.connect() as c:
                     if c.execute("SELECT 1 FROM jobs WHERE project=? AND state IN ('queued','running')", (parts[3],)).fetchone():
                         raise Rejected("a job is running for this project; wait before changing the motion composition")
                 # The edited duration is checked again at capture time against the locked timeline.
+                if value.get("native"):  # a window-layout style's insert plan (wizard-os#1012); absent: unchanged
+                    return self.send(201, motion.submit(folder, value.get("files", {}), value["plan"], None,
+                                                        bool(value.get("replace", True)), native=True))
                 return self.send(201, motion.submit(folder, value.get("files", {}), value["plan"], None, bool(value.get("replace", True))))
         if method == "GET" and self.path == "/v1/workflow/docs":
             return self.send(200, {"docs": sorted(workflow.DOCS)})

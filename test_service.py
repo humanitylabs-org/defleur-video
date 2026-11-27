@@ -15,6 +15,7 @@ import threading
 import time
 import unittest
 import copy
+import re
 import sys
 import wave
 from unittest.mock import patch
@@ -1780,7 +1781,7 @@ print(json.dumps([cuts, mcp_server.keeps_from(cuts, 121.728), mcp_server.preview
         finally:
             del os.environ["BROWSER_URL"]
         self.assertEqual(status, 200)
-        self.assertEqual(caps["version"], "0.9.0")
+        self.assertEqual(caps["version"], "0.10.0")
         b = caps["workflow"]["motion"]["browser"]
         self.assertFalse(b["reachable"])
         self.assertIn("Browser app", b["fix"])
@@ -1792,12 +1793,12 @@ print(json.dumps([cuts, mcp_server.keeps_from(cuts, 121.728), mcp_server.preview
         self.assertGreaterEqual(caps["limits"]["duration_s"], 900)
         self.assertGreaterEqual(caps["limits"]["output_duration_s"], 300)
 
-    def _mcp_py(self, code):
+    def _mcp_py(self, code, *args):
         """Run code against mcp_server in the venv Python (the MCP SDK is not in the service Python); returns its last JSON line."""
         py = "/opt/venv/bin/python" if Path("/opt/venv/bin/python").exists() else os.environ.get("E2E_MCP_PYTHON", sys.executable)
         env = {**os.environ, "VIDEO_DATA_DIR": tempfile.mkdtemp()}
         out = subprocess.run([py, "-I", "-c", "import sys, json\nsys.path.insert(0, sys.argv[1])\nimport mcp_server\n" + code,
-                              str(Path(service.__file__).parent)], capture_output=True, text=True, env=env)
+                              str(Path(service.__file__).parent), *args], capture_output=True, text=True, env=env)
         if out.returncode and "No module named 'mcp'" in out.stderr:
             self.skipTest("MCP SDK not installed in this Python")
         self.assertEqual(out.returncode, 0, out.stderr[-2000:])
@@ -1991,6 +1992,224 @@ print(json.dumps([a, b, done]))
         self.assertEqual((got["name"], got["version"], got["user_agent"]), ("hermes-agent", "1.2script", "python-httpx/0.28"))
         self.assertEqual(json.loads(service.mcp_client_seen("10.0.0.9", b'{"method":"tools/call"}', None))["name"], "hermes-agent")
         self.assertIsNone(service.mcp_client_seen("10.0.0.10", b'{"method":"tools/call"}', None))
+
+    # ---------- style packs (wizard-os#1012) ----------
+
+    def style_pack(self, **over):
+        """A window-layout pack with every feature (slots, layers, insert box, joins, finish) on installed fonts."""
+        spec = {"schema": "defleur-video-style/1", "id": "test-window", "name": "Test window", "author": "builder test", "version": 1,
+                "layout": {"mode": "window", "rect": [0, 660, 1080, 608], "background": "#000000", "grade": {"contrast": 1.04, "saturation": 1.05}},
+                "preset": {"caption": {"font": "Montserrat:style=Bold", "font_size_px": 68, "uppercase": True, "max_words": 3,
+                                       "text_color": "#FFFFFF", "active_color": "#B59662", "outline_color": "#000000", "outline_width_px": 5,
+                                       "shadow_px": 0, "active_scale": 1.0, "safe_rect": [40, 1360, 1040, 1560], "anchor": "top",
+                                       "pop_from_scale": 0.85, "pop_ms": 80}},
+                "slots": {"title": {"max_chars": 32}, "tagline": {"max_chars": 40}},
+                "text_layers": [{"id": "title", "kind": "slot", "font": "Montserrat:style=Bold", "size_px": 96, "color": "#FFFFFF", "top_px": 330, "max_lines": 2},
+                                {"id": "tagline", "kind": "slot", "font": "Playfair Display:style=Italic", "size_px": 80, "color": "#B59662",
+                                 "top_by_lines": {"of": "title", "1": 470, "2": 560}},
+                                {"id": "wordmark", "kind": "fixed", "size_px": 50, "letter_spacing_px": 7, "bottom_margin_px": 120,
+                                 "runs": [{"text": "THE SECOND ", "font": "Cormorant Garamond", "color": "#F2EEE6"},
+                                          {"text": "RENAISSANCE", "font": "Cormorant Garamond:style=Italic", "color": "#B59662"}]}],
+                "inserts": {"box": [0, 650, 1080, 680], "fade_in_s": 0.3, "fade_out_s": 0.3,
+                            "pacing": {"min_s": 0.5, "max_s": 1.0, "first_by_s": 1.0, "min_gap_s": 0.2, "share_min": 0.1, "share_max": 0.8}},
+                "joins": {"punch_in": 1.08}, "finish": {"fade_in_s": 0.3, "fade_out_s": 0.4, "loudness_lufs": -14, "true_peak_db": -1.5},
+                "agent_rules": {"captions": "Window captions in y 1360-1560.", "approval": "Show title and tagline with 2 alternates each."},
+                "references": [{"title": "Reference Short", "url": "https://example.com/ref"}]}
+        spec.update(over)
+        return {"files": {"style.json": json.dumps(spec), "STYLE.md": "# Test window\nEdit by these rules.\n"}}
+
+    def test_style_pack_validation_refuses_with_plain_reasons(self):
+        import styles
+        resolved, files, digest = styles.check_pack(self.style_pack())
+        self.assertEqual(resolved["layout"]["mode"], "window")
+        self.assertTrue(resolved["text_layers"][1]["font_path"].endswith("PlayfairDisplay-Italic.ttf"))
+        self.assertTrue(resolved["text_layers"][2]["runs"][1]["font_path"].endswith("CormorantGaramond-Italic.ttf"))
+        self.assertRegex(digest, "^[a-f0-9]{64}$")
+        bad = [({"colour": "#FFFFFF"}, "unknown key 'colour'"),
+               ({"preset": {"caption": {"font": "Comic Neue:style=Bold", "safe_rect": [40, 1360, 1040, 1560]}}}, "isn't installed"),
+               ({"inserts": {"box": [0, 650, 1080, 680], "ken_burns": True}}, "can't draw Ken Burns"),
+               ({"layout": {"mode": "split"}}, "can draw only 'crop'"),
+               ({"layout": {"mode": "crop"}}, "crop layout's caption renderer can't draw that yet"),
+               ({"id": "defleur-house"}, "built in"), ({"version": "1.2"}, "whole number")]
+        for over, reason in bad:
+            with self.subTest(over=over):
+                with self.assertRaisesRegex(styles.StyleError, re.escape(reason) if "'" not in reason else reason):
+                    styles.check_pack(self.style_pack(**over))
+        pack = self.style_pack()
+        for name, value, reason in (("render.py", "print(1)", "data only"), ("STYLE.md", "#!/bin/sh\nrm -rf /", "data only"),
+                                    ("notes.txt", "hi", "not allowed in a pack"), ("references/a.png", {"base64": "aGVsbG8="}, "real .png")):
+            with self.subTest(file=name):
+                with self.assertRaisesRegex(styles.StyleError, reason):
+                    styles.check_pack({"files": {**pack["files"], name: value}})
+
+    def test_style_registry_house_default_test_gate_and_retire(self):
+        import styles
+        with tempfile.TemporaryDirectory(dir=self.root) as temp, patch.object(styles, "ROOT", Path(temp)):
+            self.assertIsNone(styles.resolve(None))                   # no style: the house path, nothing changes
+            self.assertIsNone(styles.resolve("defleur-house", "1"))
+            self.assertEqual([r["id"] for r in styles.listing()], ["defleur-house"])
+            row = styles.install(self.style_pack(), "novairecito@example.test")
+            self.assertEqual((row["selectable"], row["publisher"]), (False, "novairecito@example.test"))
+            self.assertEqual([r["id"] for r in styles.listing()], ["defleur-house"])   # not offered before its test render
+            with self.assertRaisesRegex(styles.StyleError, "hasn't passed its test render"):
+                styles.resolve("test-window", "1")
+            self.assertEqual(styles.install(self.style_pack(), "again")["sha256"], row["sha256"])   # same bytes: no-op
+            with self.assertRaisesRegex(styles.StyleError, "bump version"):
+                styles.install(self.style_pack(name="Changed"))
+            styles.record_test("test-window", "1", {"pass": True})
+            self.assertEqual(styles.resolve("test-window")["version"], "1")
+            styles.install(self.style_pack(version=2, name="Second"))
+            styles.record_test("test-window", "2", {"pass": False, "reason": "caption doesn't fit"})
+            self.assertEqual(styles.resolve("test-window")["version"], "1")   # newest that PASSED
+            styles.record_test("test-window", "2", {"pass": True})
+            self.assertEqual(styles.resolve("test-window")["version"], "2")
+            self.assertEqual(styles.resolve("test-window", "1")["version"], "1")   # older versions stay selectable
+            styles.retire("test-window", "2")
+            self.assertEqual([(r["id"], r["version"]) for r in styles.listing()], [("defleur-house", "1"), ("test-window", "1")])
+            self.assertTrue(styles.resolve("test-window", "2", allow_untested=True))   # old Shorts keep resolving their version
+            with self.assertRaisesRegex(styles.StyleError, "can't be retired"):
+                styles.retire("defleur-house", None)
+
+    def test_style_rules_replace_house_text_only_when_a_style_is_chosen(self):
+        spec = json.loads(self.style_pack()["files"]["style.json"])
+        g = self._mcp_py("""
+import styles
+house_g, house_c = styles.apply_rules(mcp_server.GUIDE, mcp_server.MOTION_CONTRACT, None)
+spec = styles.validate_spec(json.loads(sys.argv[2]))
+g, c = styles.apply_rules(mcp_server.GUIDE, mcp_server.MOTION_CONTRACT, {"id": "test-window", "version": "1", "spec": spec, "style_md": "# rules"})
+print(json.dumps({"same": house_g is mcp_server.GUIDE and house_c is mcp_server.MOTION_CONTRACT, "captions": c["captions"],
+                  "approval": g["style"]["approval"], "md": g["style"]["STYLE.md"], "house_page": mcp_server.MOTION_CONTRACT["page_rules"][-1],
+                  "house_captions": mcp_server.MOTION_CONTRACT["captions"]}))
+""", json.dumps(spec))
+        self.assertTrue(g["same"])                                             # no style: the very same house objects
+        self.assertEqual(g["captions"], "Window captions in y 1360-1560.")
+        self.assertEqual(g["approval"], "Show title and tagline with 2 alternates each.")
+        self.assertEqual(g["md"], "# rules")
+        self.assertIn("1220-1460", g["house_page"])                           # the house text itself is untouched
+        self.assertIn("green spoken word", g["house_captions"])
+
+    def test_style_pacing_and_slots_refused_with_reasons(self):
+        import styles
+        spec = styles.validate_spec(json.loads(self.style_pack(inserts={"box": [0, 650, 1080, 680], "pacing": {
+            "min_s": 3.5, "max_s": 4.0, "share_min": 0.3, "share_max": 0.45, "first_by_s": 4.0, "min_gap_s": 1.0, "max_per_s": 6.0}})["files"]["style.json"]))
+        ok = {"inserts": [{"start": 3.0, "end": 6.8, "asset": "assets/a.png"}, {"start": 11.0, "end": 14.8, "asset": "assets/b.png"}]}
+        self.assertEqual(styles.pacing_problems(ok, spec, 20.35), [])
+        bad = styles.pacing_problems({"inserts": [{"start": 6.0, "end": 7.0, "asset": "assets/a.png"}, {"start": 7.5, "end": 11.5, "asset": "assets/b.mp4"}]}, spec, 20.35)
+        text = " | ".join(bad)
+        for must in ("holds 1.00 s", "still images", "0.50 s apart", "starts at 6.00 s"):
+            self.assertIn(must, text)
+        self.assertIn("needs image inserts", styles.pacing_problems({"inserts": []}, spec, 20.0)[0])
+        self.assertEqual(styles.check_slots(spec, {"title": "Who You Really Fell For", "tagline": "Hint: not them."})["tagline"], "Hint: not them.")
+        with self.assertRaisesRegex(styles.StyleError, "slot 'tagline' is required"):
+            styles.check_slots(spec, {"title": "Who You Really Fell For"})
+        with self.assertRaisesRegex(styles.StyleError, "joins must be"):
+            styles.check_joins([5.0, 2.0])
+
+    def test_style_reference_test_render_window_layers_inserts_captions_finish(self):
+        """The fixed reference test render: window, layers, insert box with fades, karaoke captions, punch-in, -14 LUFS."""
+        import styles
+        import workflow
+        spec = styles.validate_spec(json.loads(self.style_pack()["files"]["style.json"]))
+        house = json.loads((workflow.UPSTREAM_ROOT / workflow.DEFAULTS[0]).read_text())["caption"]
+        house["font_path"] = styles.resolve_font(house["font_match"], "house")
+        with tempfile.TemporaryDirectory(dir=self.root) as temp:
+            si = Path(temp) / "si.json"
+            si.write_text(json.dumps({"spec": spec, "caption_style": styles.caption_style(spec, house)}))
+            out = Path(temp) / "render"
+            subprocess.run([workflow.HELPER_PYTHON, "-I", str(workflow.APP_ROOT / "style_render.py"), "test", str(si), str(out),
+                            "--caption-dir", str(workflow.helper("encode").parent)], check=True, timeout=600, capture_output=True)
+            result = json.loads((out / "test-result.json").read_text())
+            self.assertTrue(result["pass"], result)
+            self.assertTrue(all(result["checks"].values()), result["checks"])
+            self.assertLessEqual(abs(result["loudness"]["integrated_lufs"] + 14), 0.5)
+            self.assertLessEqual(result["loudness"]["true_peak_dbtp"], -1.5)
+            ledger = json.loads((out / "layout-ledger.json").read_text())
+            self.assertEqual(ledger["rect"], [0, 660, 1080, 608])
+            self.assertEqual(ledger["fit"], [1080, 608, 0, 0])
+            self.assertEqual(ledger["text_layers"]["title"]["top"], 330)
+            self.assertEqual(ledger["text_layers"]["tagline"]["top"], 560 if ledger["text_layers"]["title"]["lines"] == 2 else 470)
+            self.assertGreater(ledger["punched_frames"], 0)
+            self.assertEqual(ledger["inserts"][0]["picture_box"], [0, 686, 1080, 608])   # 16:9 still contain-fitted in the 1080x680 box
+            live = json.loads((out / "live-check.json").read_text())
+            self.assertTrue(all(r["window_psnr_db"] >= 25 for r in live["samples"] if r["insert"] is None))
+            # whole-picture fade: frame 0 is black
+            first = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out / "final.mp4"), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                                   capture_output=True, check=True).stdout
+            self.assertLess(sum(first) / len(first), 3)
+            # audio keeps the edit's exact sample count through the finish
+            with wave.open(str(out / "edited.wav")) as a, wave.open(str(out / "finished.wav")) as b:
+                self.assertEqual(a.getnframes(), b.getnframes())
+
+    def test_style_light_serif_captions_pass_the_caption_check(self):
+        """A lowercase light serif (Playfair Display Italic, 48 px, one word per cue) passes: ink is counted, not averaged
+        over the band, so a short cue like "is" in a thin face is seen as drawn (the tester's v1/v2 Window Noir failed)."""
+        import styles
+        import workflow
+        import style_render
+        light = json.loads(self.style_pack()["files"]["style.json"])
+        light["preset"]["caption"].update(font="Playfair Display:style=Italic", font_size_px=48, uppercase=False, max_words=1,
+                                          text_color="#E8DCC4")
+        spec = styles.validate_spec(light)
+        house = json.loads((workflow.UPSTREAM_ROOT / workflow.DEFAULTS[0]).read_text())["caption"]
+        house["font_path"] = styles.resolve_font(house["font_match"], "house")
+        cs = styles.caption_style(spec, house)
+        self.assertEqual(style_render.cue_ink_min(cs), int(0.03 * (48 * 0.8 * 0.85) ** 2))
+        with tempfile.TemporaryDirectory(dir=self.root) as temp:
+            si = Path(temp) / "si.json"
+            si.write_text(json.dumps({"spec": spec, "caption_style": cs}))
+            out = Path(temp) / "render"
+            subprocess.run([workflow.HELPER_PYTHON, "-I", str(workflow.APP_ROOT / "style_render.py"), "test", str(si), str(out),
+                            "--caption-dir", str(workflow.helper("encode").parent)], check=True, timeout=600, capture_output=True)
+            live = json.loads((out / "live-check.json").read_text())
+            self.assertTrue(live["caption_band_changes_with_cues"], [(r["t"], r["band_ink_px"]) for r in live["samples"]])
+            self.assertTrue(live["pass"])
+            on = [r["band_ink_px"] for r in live["samples"] if r["cue_on"] and r["insert"] is None]
+            off = [r["band_ink_px"] for r in live["samples"] if not r["cue_on"] and r["insert"] is None]
+            self.assertGreaterEqual(min(on), live["cue_ink_min_px"])
+            self.assertLessEqual(max(off or [0]), style_render.BAND_EMPTY_MAX)
+
+    def test_window_style_final_render_stage_and_house_untouched(self):
+        """final-render with a window style input renders natively; without it the stage input is the house one, unchanged."""
+        import styles
+        from client import Client
+        client = Client(f"http://127.0.0.1:{self.server.server_port}", self.token)
+        words = [{"word": " hello", "start": 0.1, "end": 0.45, "probability": .9}, {"word": " there", "start": 0.6, "end": 1.0, "probability": .9},
+                 {"word": " world", "start": 1.2, "end": 1.8, "probability": .9}]
+        url, _ = self.fake_transcriber(words)
+        pid = client.upload(self.source)["id"]
+        src = self.stage(pid, "source-audio", {})
+        asm = self.stage(pid, "pcm-assemble", {"audio_job": src["id"], "segments": [{"start_s": 0, "end_s": 2, "reason": "whole take"}]})
+        with patch.dict(os.environ, {"TRANSCRIBER_URL": url}):
+            easr = self.stage(pid, "asr", {"audio_job": asm["id"], "language": "en"})
+        crop = self.stage(pid, "face-crop", {"assemble_job": asm["id"]})
+        spec = styles.validate_spec(json.loads(self.style_pack(inserts={"box": [0, 650, 1080, 680], "fade_in_s": 0.2, "fade_out_s": 0.2})["files"]["style.json"]))
+        style = {"id": "test-window", "version": "1", "sha256": "a" * 64, "spec": spec, "slots": {"title": "Who You Really Fell For", "tagline": "Hint: not them."},
+                 "joins": [1.0]}
+        base = {"assemble_job": asm["id"], "crop_job": crop["id"], "edited_asr_job": easr["id"]}
+        self.assertEqual(self.request("POST", f"/v1/projects/{pid}/stages/final-render",
+                                      json.dumps({**base, "style": {**style, "slots": {"title": "x"}}}))[0], 422)   # tagline required
+        # Insert plan (no index.html, no beats), as submit_motion sends it for a window style.
+        still = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360", "-frames:v", "1", "-f", "image2pipe", "-c:v", "png", "-"],
+                               check=True, capture_output=True).stdout
+        import base64
+        status, motion_st = self.request("POST", f"/v1/projects/{pid}/motion", json.dumps({
+            "files": {"assets/still.png": {"base64": base64.b64encode(still).decode()}}, "native": True,
+            "plan": {"beats": [], "inserts": [{"start": 0.5, "end": 1.2, "asset": "assets/still.png", "fit": "contain", "reason": "the line"}]}}))
+        self.assertEqual(status, 201, motion_st)
+        with patch.dict(os.environ, {"TRANSCRIBER_URL": url}):
+            render = self.stage(pid, "final-render", {**base, "style": {**style, "composition_sha256": motion_st["composition_sha256"]}})
+        rs = render["result"]["summary"]
+        self.assertEqual((rs["width"], rs["height"]), (1080, 1920))
+        self.assertEqual(rs["style"]["slots"]["tagline"], "Hint: not them.")
+        self.assertTrue(all(v is True for k, v in rs["checks"].items() if k != "min_source_region_correlation"), rs["checks"])
+        self.assertGreaterEqual(rs["checks"]["min_source_region_correlation"], 0.9)
+        self.assertEqual(rs["motion_layer"]["inserts"], 1)
+        names = {a["name"] for a in render["result"]["artifacts"]}
+        self.assertTrue({"final.mp4", "layout-ledger.json", "live-check.json", "media-verification.json", "final-integrity.json"} <= names)
+        # The house stage input has no style key and keeps James' encode.py path.
+        house = self.stage(pid, "final-render", base)
+        self.assertNotIn("style", house["result"]["summary"])
+        self.assertNotIn("layout-ledger.json", {a["name"] for a in house["result"]["artifacts"]})
 
 
 if __name__ == "__main__":

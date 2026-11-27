@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # run with -I: make th
 from editing import (FILLERS, HANDLE_S, PAUSE_S, REPORT_FILLERS, align_words, candidates_from,  # noqa: E402,F401
                      cut_regions, cut_sound_check, delivery_word_review, diff_words, edit_word_review,
                      recheck_result, recheck_windows, parse_caption_spellings, parse_vocabulary)
+import styles  # noqa: E402  (style packs, wizard-os#1012)
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -437,6 +438,86 @@ def interrupted_runs():
             pass
 
 
+# ---------- styles (wizard-os#1012) ----------
+
+def project_style(project_id: str) -> dict | None:
+    """The style the project's latest finished start_edit recorded: None for the house style (nothing changes)."""
+    edits = runs_for(project_id, "start_edit", "done")
+    ref = (edits[-1]["params"].get("style") if edits else None) or None
+    if not ref:
+        return None
+    try:
+        chosen = styles.resolve(ref["id"], ref["version"], allow_untested=True)
+    except styles.StyleError as e:
+        raise ToolError(f"this project's style can't be used: {e}") from None
+    if chosen["sha256"] != ref["sha256"]:
+        raise ToolError(f"style {ref['id']} v{ref['version']} changed on this server since start_edit; start the edit again")
+    return {**chosen, "joins": ref.get("joins") or []}
+
+
+def style_rows() -> list[dict]:
+    return [{k: r.get(k) for k in ("id", "version", "name", "author", "default", "layout", "slots", "summary") if r.get(k) is not None}
+            for r in styles.listing()]
+
+
+def house_caption() -> dict:
+    import workflow  # noqa: PLC0415 (helper paths only)
+    cap = json.loads((workflow.UPSTREAM_ROOT / workflow.DEFAULTS[0]).read_text())["caption"]
+    if not cap.get("font_path"):
+        cap["font_path"] = styles.resolve_font(cap["font_match"], "house caption font")
+    return cap
+
+
+def do_test_style(run: dict) -> dict:
+    """The fixed reference test render (style_render.py test) for one installed pack; records pass/fail on the pack."""
+    import subprocess
+    import workflow  # noqa: PLC0415
+    p = run["params"]
+    chosen = styles.resolve(p["style"], p["version"], allow_untested=True)
+    out = RUNS / (run["id"] + ".style-test")
+    out.mkdir(parents=True, exist_ok=True, mode=0o700)
+    si = out / "style-input.json"
+    si.write_text(json.dumps({"spec": chosen["spec"], "caption_style": styles.caption_style(chosen["spec"], house_caption())}))
+    run["step"] = "reference-test-render"
+    save(run)
+    if chosen["spec"]["layout"]["mode"] == "window":
+        r = subprocess.run([workflow.HELPER_PYTHON, "-I", str(workflow.APP_ROOT / "style_render.py"), "test", str(si), str(out / "render"),
+                            "--caption-dir", str(workflow.helper("encode").parent)], capture_output=True, text=True, timeout=900)
+        if r.returncode:
+            err = (r.stderr.strip().splitlines() or ["no output"])[-1][:400]
+            result = {"pass": False, "reason": f"the reference test render failed: {err}"}
+        else:
+            result = json.loads((out / "render" / "test-result.json").read_text())
+            if not result["pass"]:
+                result["reason"] = "reference test render checks failed: " + ", ".join(k for k, v in result["checks"].items() if not v)
+    else:
+        # A crop-layout pack only changes the preset: it must resolve through James' preset.py like a project preset.
+        house = json.loads((workflow.UPSTREAM_ROOT / workflow.DEFAULTS[0]).read_text())
+        overlay = chosen["spec"].get("preset", {})
+        path = out / "project-preset.json"
+        path.write_text(json.dumps({"version": 1, **overlay}))
+        r = subprocess.run([workflow.HELPER_PYTHON, "-I", str(workflow.helper("preset")), str(out / "resolution.json"), "--defaults",
+                            str(workflow.UPSTREAM_ROOT / workflow.DEFAULTS[0]), "--project", str(path)], capture_output=True, text=True, timeout=60)
+        result = {"pass": r.returncode == 0, "checks": {"preset_resolves": r.returncode == 0},
+                  "reason": None if r.returncode == 0 else (r.stderr.strip().splitlines() or ["preset.py failed"])[-1][:400],
+                  "reference": "crop layout: the pack's preset overlay resolves over James' house preset (preset.py)"}
+        del house
+    row = styles.record_test(chosen["id"], chosen["version"], {k: result.get(k) for k in ("pass", "reason", "checks", "loudness", "final_sha256", "reference")})
+    shutil_rm(out, keep=("render/final-frame-sample.png", "render/test-result.json", "render/final.mp4"))
+    return {"style": row, "test": result, "selectable": row["selectable"],
+            "sample_frame": str(out / "render" / "final-frame-sample.png") if (out / "render" / "final-frame-sample.png").is_file() else None}
+
+
+def shutil_rm(root: Path, keep=()):
+    """Drop a test render's working files, keeping the named evidence."""
+    for p in sorted(root.rglob("*"), reverse=True):
+        rel = p.relative_to(root).as_posix()
+        if p.is_file() and rel not in keep:
+            p.unlink(missing_ok=True)
+        elif p.is_dir() and not any(p.iterdir()):
+            p.rmdir()
+
+
 # ---------- start_edit ----------
 
 def do_start_edit(run: dict) -> dict:
@@ -457,7 +538,16 @@ def do_start_edit(run: dict) -> dict:
     env = artifact(src["id"], "energy.json")
     cands, proposed, untranscribed, screen = candidates_from(words, duration, env)
     asr_receipt = artifact(asr["id"], "asr.json")
-    return {
+    chosen = run["params"].get("style")
+    extra = {}
+    if chosen:  # only when a style pack was chosen: the house result keeps exactly its keys
+        spec = styles.resolve(chosen["id"], chosen["version"], allow_untested=True)
+        guide, _ = styles.apply_rules(GUIDE, MOTION_CONTRACT, spec)
+        extra = {"style": {"id": chosen["id"], "version": chosen["version"], "joins": chosen.get("joins") or []}, "style_guide": guide["style"],
+                 "style_rules": {k: guide["motion_contract"][k] for k in ("page_rules", "beat_rules", "captions", "inserts", "sequence")},
+                 "style_next": ("This project uses the style above: draft the edit by its STYLE.md. "
+                                + (guide["style"]["approval"] or "") + " Then follow style_rules.sequence after apply_cuts.")}
+    return {**extra,
         "project_id": run["project"], "duration_s": round(duration, 3), "language": detected,
         "language_probability": asr_receipt.get("language_probability"),
         "constant_frame_rate": summary.get("constant_frame_rate"),
@@ -774,6 +864,12 @@ def do_render_final(run: dict) -> dict:
     jobs = cut["jobs"]
     t0 = time.monotonic()
     proof = run["params"].get("proof")
+    sp = run["params"].get("style")
+    chosen = None
+    if sp:
+        chosen = styles.resolve(sp["id"], sp["version"], allow_untested=True)
+        if chosen["sha256"] != sp["sha256"]:
+            raise ToolError(f"style {sp['id']} v{sp['version']} changed on this server; start the edit again")
     if proof:
         crop = api("GET", f"/v1/jobs/{proof['crop_job']}")
         body = {"assemble_job": jobs["pcm_assemble"], "crop_job": proof["crop_job"], "edited_asr_job": jobs["edited_asr"],
@@ -781,6 +877,15 @@ def do_render_final(run: dict) -> dict:
     else:
         crop = stage(run, "face-crop", crop_body(jobs, run["params"].get("framing")), wait_s=1900)
         body = {"assemble_job": jobs["pcm_assemble"], "crop_job": crop["id"], "edited_asr_job": jobs["edited_asr"]}
+    if chosen:
+        body["style"] = {"id": chosen["id"], "version": chosen["version"], "sha256": chosen["sha256"], "spec": chosen["spec"],
+                         "slots": sp.get("slots") or {}, "joins": sp.get("joins") or []}
+        if sp.get("composition_sha256"):
+            body["style"]["composition_sha256"] = sp["composition_sha256"]
+        overlay = chosen["spec"].get("preset") or {}
+        if chosen["spec"]["layout"]["mode"] == "crop" and overlay:
+            preset = stage(run, "resolve-preset", {"project": {"version": 1, **overlay}})
+            body["preset_job"] = preset["id"]
     if run["params"].get("caption_spellings"):
         body["caption_spellings"] = run["params"]["caption_spellings"]
     render = stage(run, "final-render", body, wait_s=14500)
@@ -824,6 +929,8 @@ def do_render_final(run: dict) -> dict:
     beats_delivered = [{"start": b.get("start"), "end": b.get("end"), "spoken_anchor": b.get("spoken_anchor"), "shows": b.get("state_after"),
                         "visual_family": b.get("visual_family")} for b in plan.get("beats", [])] if proof else []
     inserts_delivered = [{k: r.get(k) for k in ("start", "end", "asset", "reason")} for r in plan.get("inserts", [])] if proof else []
+    if sp and rs.get("style", {}).get("layout") == "window":
+        inserts_delivered = [{k: r.get(k) for k in ("start", "end", "asset", "reason")} for r in (sp.get("plan") or {}).get("inserts", [])]
     lost = gs.get("words_lost_vs_edited") or []
     # Older gate summaries (no lost_words_fail) keep the strict rule: any lost word fails.
     words_fail = bool(gs.get("lost_words_fail", bool(lost)))
@@ -878,6 +985,7 @@ def do_render_final(run: dict) -> dict:
                  "delivery_gate": gate_job["id"] if gate_job else None},
         "beats_delivered": beats_delivered,
         "inserts_delivered": inserts_delivered,
+        **({"style": {k: rs["style"].get(k) for k in ("id", "version", "sha256", "layout", "slots", "joins", "loudness")}} if rs.get("style") else {}),
         "next": ("Tell the owner in plain words: resolution, duration, the motion beats and inserts delivered (beats_delivered: time "
                  "and what each shows; say so plainly if this render is plain and why), caption count, how the speaker is framed (if a "
                  "crop flag appears, look at several frames across the video before judging it), delivery gate pass/fail with the "
@@ -918,9 +1026,20 @@ def _result(fn, *a, **kw):
     "'Claude Code', 'Cursor') and agent_model = your exact model id. Returns agent_check (intended setup: Hermes Agent + Claude Opus 5.5; "
     "if requires_owner_confirmation, show the owner its warning and wait for a yes before importing), the default edit (approved cuts "
     "+ motion graphics + captions + crop), the exact tool order (one combined cut + motion-plan approval, then apply_cuts, submit_motion, "
-    "capture_motion smoke/proof, render_final({'motion': true})), James DeFleur's motion_contract, limits and what is not automated."))
-def workflow_guide(ctx: Context, agent_harness: str | None = None, agent_model: str | None = None) -> dict:
-    return {"agent_check": agent_check(agent_harness, agent_model, client_from(ctx)), **GUIDE}
+    "capture_motion smoke/proof, render_final({'motion': true})), James DeFleur's motion_contract, limits and what is not automated. "
+    "Lists the editing styles (styles.available); pass style (and style_version) to get that style's STYLE.md and the rules it replaces."))
+def workflow_guide(ctx: Context, agent_harness: str | None = None, agent_model: str | None = None, style: str | None = None,
+                   style_version: str | None = None) -> dict:
+    def go():
+        try:
+            chosen = styles.resolve(style, None if style_version is None else str(style_version))
+        except styles.StyleError as e:
+            raise ToolError(str(e)) from None
+        guide, _ = styles.apply_rules(GUIDE, MOTION_CONTRACT, chosen)
+        return {"agent_check": agent_check(agent_harness, agent_model, client_from(ctx)), **guide,
+                "styles": {"available": style_rows(), "default": styles.HOUSE_ID,
+                           "how": "workflow_guide(style=<id>) shows that style's STYLE.md and rules; start_edit(..., style=<id>) uses it."}}
+    return _result(go)
 
 
 @mcp.tool(description=(
@@ -955,7 +1074,9 @@ def capabilities() -> dict:
                 "resources": wf.get("resources"),
                 "alignment": {"model": al.get("model"), "cached": al.get("cached"),
                               "note": None if al.get("cached") else "First alignment downloads the Whisper checkpoint (needs internet once, ~1-2 GB for turbo)."},
-                "limits": caps["limits"], "not_built_yet": NOT_BUILT, "ai_calls": False}
+                "limits": caps["limits"], "not_built_yet": NOT_BUILT, "ai_calls": False,
+                "styles": {"available": style_rows(), "default": styles.HOUSE_ID,
+                           "how": "start_edit(project_id, style=<id>, style_version=<version>) picks one; omit style for the house style."}}
     return _result(go)
 
 
@@ -1035,9 +1156,13 @@ def import_file(path: str) -> dict:
     "'done'; the result has the transcript with word timings, filler / long-pause / repeat candidates, proposed_cuts and James "
     "DeFleur's editorial rules. IMPORTANT: draft the motion plan from the transcript too, show the owner the proposed cut list "
     "AND the motion plan in ONE question and get their approval (or changes) BEFORE calling apply_cuts. language is optional (e.g. 'en'); default is auto-detect. "
+    "style / style_version (optional): an editing style from capabilities.styles; omit for James' house style. The project records it and "
+    "the result then carries that style's STYLE.md and rules. joins (optional, styles that punch in): source seconds where the excerpt "
+    "jumps to a later range. "
     "vocabulary (only with the owner's caption-spellings switch on): names and terms the recogniser should expect, the show's list "
     "plus this project's, e.g. ['Novaire', 'Pukwudgies', 'Lenape']; used for every transcription of this project."))
-def start_edit(project_id: str, language: str | None = None, vocabulary: list[str] | None = None) -> dict:
+def start_edit(project_id: str, language: str | None = None, vocabulary: list[str] | None = None, style: str | None = None,
+               style_version: str | None = None, joins: list[float] | None = None) -> dict:
     def go():
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex id returned by the upload")
@@ -1052,6 +1177,16 @@ def start_edit(project_id: str, language: str | None = None, vocabulary: list[st
                 params["vocabulary"] = parse_vocabulary(vocabulary)
             except ValueError as e:
                 raise ToolError(str(e)) from None
+        try:
+            chosen = styles.resolve(style, None if style_version is None else str(style_version))
+            if chosen or joins:
+                spec = chosen["spec"] if chosen else {}
+                j = styles.check_joins(joins)
+                if j and not (spec.get("joins") or {}).get("punch_in"):
+                    raise styles.StyleError("joins need a style that punches in on a joined range (the house style takes one range)")
+                params["style"] = {"id": chosen["id"], "version": chosen["version"], "sha256": chosen["sha256"], "joins": j}
+        except styles.StyleError as e:
+            raise ToolError(str(e)) from None
         with LOCK:
             if runs_for(project_id, state="running"):
                 raise ToolError("a run is already in progress for this project; call get_status(project_id)")
@@ -1164,6 +1299,17 @@ def submit_motion(project_id: str, files: dict, plan: dict, replace: bool = True
             raise ToolError("project_id must be the 32-hex project id")
         if runs_for(project_id, state="running"):
             raise ToolError("a run is in progress for this project; wait for it with get_status first")
+        chosen = project_style(project_id)
+        if chosen and chosen["spec"]["layout"]["mode"] == "window":
+            cuts = runs_for(project_id, "apply_cuts", "done")
+            duration = (cuts[-1]["result"] or {}).get("edited_duration_s") if cuts else None
+            problems = styles.pacing_problems(plan if isinstance(plan, dict) else {}, chosen["spec"], duration)
+            if problems:
+                raise ToolError("the insert plan breaks this style's pacing (STYLE.md): " + "; ".join(problems))
+            st = api("POST", f"/v1/projects/{project_id}/motion", {"files": files, "plan": plan, "replace": replace, "native": True})
+            return {**{k: v for k, v in st.items() if k != "plan"},
+                    "next": ("This style draws the window, image box, text layers and captions itself: no capture step. Call "
+                             "render_final(project_id, {'motion': true, 'slots': {<approved title/tagline>}}).")}
         st = api("POST", f"/v1/projects/{project_id}/motion", {"files": files, "plan": plan, "replace": replace})
         return {**{k: v for k, v in st.items() if k != "plan"},
                 "next": "Call capture_motion(project_id, 'smoke') and look at the returned frames. The capture checks the page contract at runtime and reports any error."}
@@ -1224,15 +1370,17 @@ def capture_motion(project_id: str, mode: str, ctx: Context, framing: dict | Non
     "failing (pass 'plain_reason': '<why>' and tell the owner); "
     "{'motion': true} after a passing capture_motion 'proof' of the current composition (full capture of every frame, "
     "motion-window and caption-suppression checks); {'framing': {...}} as in preview_framing (with motion, the proof's "
-    "framing is used); {'caption_spellings': {\"heard words\": \"Right Spelling\"}} (only with the owner's caption-spellings "
+    "framing is used). A project started with a style: 'slots' carries the approved text for its slots (e.g. {'title': ..., "
+    "'tagline': ...}); a window-layout style needs no capture_motion proof (the app draws its inserts after submit_motion)."
+    " {'caption_spellings': {\"heard words\": \"Right Spelling\"}} (only with the owner's caption-spellings "
     "switch on) fixes misheard names in the burned captions, as in apply_cuts, and replaces apply_cuts' list."))
 def render_final(project_id: str, ctx: Context, options: dict | None = None) -> dict:
     def go():
         if not ID.fullmatch(project_id or ""):
             raise ToolError("project_id must be the 32-hex project id")
         opts = options or {}
-        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "caption_spellings"}:
-            raise ToolError("options may contain only 'motion' (bool), 'framing' (object) and 'plain_reason' (text)"
+        if not isinstance(opts, dict) or set(opts) - {"motion", "framing", "plain_reason", "caption_spellings", "slots"}:
+            raise ToolError("options may contain only 'motion' (bool), 'framing' (object), 'plain_reason' (text) and 'slots' (style text)"
                             + (" and 'caption_spellings' (object)" if spellings_on() else ""))
         if "caption_spellings" in opts and not spellings_on():
             raise ToolError("options may contain only 'motion' (bool), 'framing' (object) and 'plain_reason' (text); "
@@ -1243,7 +1391,23 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
             raise ToolError("run apply_cuts for this project first and wait for it to finish (get_status)")
         cut = cuts[-1]
         proof = None
-        if opts.get("motion"):
+        chosen = project_style(project_id)
+        style_param = None
+        if chosen:
+            try:
+                slots = styles.check_slots(chosen["spec"], opts.get("slots") or {})
+            except styles.StyleError as e:
+                raise ToolError(str(e)) from None
+            style_param = {"id": chosen["id"], "version": chosen["version"], "sha256": chosen["sha256"], "slots": slots,
+                           "joins": chosen["joins"]}
+        elif opts.get("slots"):
+            raise ToolError("slots are for styles with text slots; this project uses the house style")
+        if chosen and chosen["spec"]["layout"]["mode"] == "window":
+            current = api("GET", f"/v1/projects/{project_id}/motion")
+            if current.get("submitted"):
+                style_param["composition_sha256"] = current["composition_sha256"]
+                style_param["plan"] = {"inserts": current.get("plan", {}).get("inserts", [])}
+        elif opts.get("motion"):
             proof = latest_proof(project_id, cut["id"])
             if opts.get("framing") and opts["framing"] != proof["framing"]:
                 raise ToolError("framing differs from the proof capture's framing; capture a new proof with this framing")
@@ -1257,9 +1421,17 @@ def render_final(project_id: str, ctx: Context, options: dict | None = None) -> 
         with LOCK:
             if runs_for(project_id, state="running"):
                 raise ToolError("a run is already in progress for this project; call get_status(project_id)")
-            run = start_run("render_final", project_id, {"cut": {"jobs": cut["result"]["jobs"], "run": cut["id"]},
-                                                         "language": lang, "base_url": base_url(ctx), "proof": proof,
-                                                         "framing": opts.get("framing"), **extra}, do_render_final)
+            params = {"cut": {"jobs": cut["result"]["jobs"], "run": cut["id"]}, "language": lang, "base_url": base_url(ctx), "proof": proof,
+                      "framing": opts.get("framing"), **extra}
+            if style_param:
+                params["style"] = style_param
+            run = start_run("render_final", project_id, params, do_render_final)
+        if style_param and chosen["spec"]["layout"]["mode"] == "window":
+            return {"run_id": run["id"], "state": "running", "from_apply_cuts_run": cut["id"],
+                    "style": {"id": chosen["id"], "version": chosen["version"], "slots": style_param["slots"]},
+                    "inserts": len((style_param.get("plan") or {}).get("inserts", [])),
+                    "next": f"Call get_status('{run['id']}') now and keep calling it until state is 'done'. The app draws this style's "
+                            "window, image box, text layers and captions itself (about 0.1 s per frame plus checks)."}
         out = {"run_id": run["id"], "state": "running", "from_apply_cuts_run": cut["id"], "motion": bool(proof),
                "next": f"Call get_status('{run['id']}') now and keep calling it until state is 'done' (each call waits up to ~55 s; "
                        "elapsed_s, sub_stage and estimate_remaining_s move while it works). "
@@ -1312,6 +1484,57 @@ def public_run(r: dict, now: float | None = None) -> dict:
         what = r["step"] + (f" / {out['sub_stage']['phase']}" if out.get("sub_stage", {}).get("phase") else "")
         out["next"] = f"Still working on '{what}' (it is progressing; elapsed_s is live). Call get_status('{r['id']}') again."
     return out
+
+
+@mcp.tool(description=(
+    "Editing styles (style packs): every style this server has, including ones not yet selectable (failed or untested test "
+    "render, retired). capabilities.styles lists only the selectable ones."))
+def list_styles(include_hidden: bool = True) -> dict:
+    return _result(lambda: {"styles": styles.listing(include_hidden=bool(include_hidden)), "default": styles.HOUSE_ID,
+                            "fonts": styles.installed_fonts(), "schema": styles.SCHEMA})
+
+
+@mcp.tool(description=(
+    "Maintainers: install one version of an editing style pack. pack = {'files': {'style.json': <text>, 'STYLE.md': <text>, "
+    "'references/<name>.mp4|jpg|png|webp': {'base64': ...}}} (data only: scripts and other files are refused). Validation refuses "
+    "unknown keys, fonts not installed here and anything the renderer can't draw yet, with the reason. A new version is NOT "
+    "selectable until test_style passes. publisher names who published it (recorded with the pack)."))
+def install_style(pack: dict, publisher: str | None = None) -> dict:
+    def go():
+        try:
+            row = styles.install(pack, publisher)
+        except styles.StyleError as e:
+            raise ToolError(f"style refused: {e}") from None
+        return {"style": row, "next": f"Call test_style('{row['id']}', '{row['version']}') to run its reference test render."}
+    return _result(go)
+
+
+@mcp.tool(description=(
+    "Maintainers: run an installed style's fixed reference test render (a 4 s reference excerpt with fixed words, one image insert "
+    "and one join, through the style's real renderer and its pixel/loudness checks). Returns a run_id; get_status until 'done'. "
+    "The style becomes selectable only when it passes."))
+def test_style(style: str, version: str) -> dict:
+    def go():
+        try:
+            if styles.resolve(style, str(version), allow_untested=True) is None:
+                raise styles.StyleError(f"{styles.HOUSE_ID} is built in and needs no test render")
+        except styles.StyleError as e:
+            raise ToolError(str(e)) from None
+        run = start_run("test_style", "styles", {"style": style, "version": str(version)}, do_test_style)
+        return {"run_id": run["id"], "state": "running", "next": f"Call get_status('{run['id']}') until 'done' (about a minute)."}
+    return _result(go)
+
+
+@mcp.tool(description=(
+    "Maintainers: retire a style (all versions, or one version) so it is no longer offered for new edits; retired=false brings it "
+    "back. Past edits and their videos are never touched. The house style can't be retired."))
+def retire_style(style: str, version: str | None = None, retired: bool = True) -> dict:
+    def go():
+        try:
+            return {"styles": styles.retire(style, None if version is None else str(version), bool(retired))}
+        except styles.StyleError as e:
+            raise ToolError(str(e)) from None
+    return _result(go)
 
 
 @mcp.tool(description=(
