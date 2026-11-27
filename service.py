@@ -32,7 +32,7 @@ import secrets
 from typing import cast
 from editing import DURATION_TOLERANCE_S, Rejected, validate_options, validate_transcript, visual_filters, review_artifacts
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 UPSTREAM = "30768288eb1308b18216a5df5eb4648fbce3e55b"
 MAX_UPLOAD = 8 * 1024 * 1024 * 1024
 MAX_PROJECTS = 8
@@ -908,6 +908,10 @@ class Store:
 
     def submit_stage(self, identifier, stage, value):
         metadata = self.project(identifier)
+        if isinstance(value, dict) and (("caption_spellings" in value and stage == "final-render") or
+                                        ("vocabulary" in value and stage == "asr")) and not switch_on("caption-spellings"):
+            raise Rejected("caption spellings and recogniser names are off on this Wizard (app switch "
+                           "defleur-video:caption-spellings); the owner can turn them on")
         workflow.validate(stage, value, metadata, lambda jid, stages: self.stage_ref(identifier, jid, stages))
         if __import__("shutil").disk_usage(self.root).free < 512 * 1024 * 1024:
             raise Rejected("workflow stages require 512 MiB free scratch reserve")
@@ -1579,6 +1583,7 @@ def supervise_mcp(port, token):
         return None
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "VIDEO_DATA_DIR", "VIDEO_PUBLIC_URL", "TMPDIR", "HOME")}
     env.update({"VIDEO_INTERNAL_API": f"http://127.0.0.1:{port}", "VIDEO_API_TOKEN": token, "VIDEO_VERSION": VERSION,
+                "WIZARD_SWITCHES_FILE": str(_sw_file()),
                 "MCP_INTERNAL_PORT": str(MCP_PORT), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"})
 
     def loop():
@@ -1606,7 +1611,13 @@ import threading as _sw_threading
 from pathlib import Path as _SwPath
 from urllib.parse import urlsplit as _sw_urlsplit
 
-SWITCHES = []
+SWITCHES = [
+    {'id': 'caption-spellings', 'name': 'Caption spellings for names',
+     'description': ("The editor can correct misheard names in the burned captions (render_final or apply_cuts "
+                     "caption_spellings, e.g. \"pug wudgies\" -> Pukwudgies) and give the recogniser a list of names to "
+                     "expect (start_edit vocabulary). The delivery gate still checks no spoken words were lost."),
+     'default': False, 'issues': ['humanitylabs-org/wizard-os#1021']},
+]
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
 _SW_LOCAL = {'localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'}
