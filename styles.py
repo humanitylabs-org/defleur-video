@@ -38,8 +38,8 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,47}$")
 VERSION_RE = re.compile(r"^[1-9][0-9]{0,3}$")
 COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 REF_RE = re.compile(r"^references/[a-z0-9][a-z0-9_-]{0,47}\.(mp4|jpg|jpeg|png|webp)$")
-REF_MAX = 25 << 20
-PACK_MAX = 80 << 20
+REF_MAX = 5 << 20  # small references only: the pack travels in one MCP call (8 MiB, base64)
+PACK_MAX = 5 << 20
 TEXT_MAX = 64 << 10
 MAGIC = {".png": lambda b: b[:8] == b"\x89PNG\r\n\x1a\n", ".jpg": lambda b: b[:3] == b"\xff\xd8\xff",
          ".jpeg": lambda b: b[:3] == b"\xff\xd8\xff", ".webp": lambda b: b[:4] == b"RIFF" and b[8:12] == b"WEBP",
