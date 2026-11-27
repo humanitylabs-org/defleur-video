@@ -32,7 +32,7 @@ import secrets
 from typing import cast
 from editing import DURATION_TOLERANCE_S, Rejected, validate_options, validate_transcript, visual_filters, review_artifacts
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 UPSTREAM = "30768288eb1308b18216a5df5eb4648fbce3e55b"
 MAX_UPLOAD = 8 * 1024 * 1024 * 1024
 MAX_PROJECTS = 8
@@ -962,7 +962,7 @@ class Store:
             # Same app version or nothing: the house style must not depend on where a Short renders.
             self.remote.gone(info["runner"])
             raise Rejected(f"runner has DeFleur {info['version']}; this app is {VERSION}")
-        self.remote.seen(info["runner"], info["label"], info["slots"], info["arch"])
+        self.remote.seen(info["runner"], info["label"], info["slots"], info["arch"], info["free"])
         if not info["free"]:
             return {"job": None}
         now = time.time()
@@ -1072,7 +1072,7 @@ class Store:
         """Where each active capture/final-render stage is: taken by a runner, waiting for it, or on this box."""
         live = self.remote.live()
         with self.connect() as c:
-            rows = c.execute("SELECT j.id, j.project, j.state, j.plan, r.label, r.state AS rstate FROM jobs j "
+            rows = c.execute("SELECT j.id, j.project, j.state, j.plan, j.created, r.label, r.state AS rstate, r.note FROM jobs j "
                              "LEFT JOIN remote_jobs r ON r.job = j.id WHERE j.state IN ('queued','running')").fetchall()
         jobs = []
         for r in rows:
@@ -1081,15 +1081,18 @@ class Store:
                 continue
             if r["rstate"] == "running":
                 where = "runner"
-            elif r["state"] == "queued" and live and r["rstate"] is None:
+            elif r["state"] == "queued" and r["rstate"] is None and self.remote.holds(r["created"]):
                 where = "waiting_for_runner"
             elif r["state"] == "queued":
                 where = "waiting_here"
             else:
                 where = "here"
-            jobs.append({"id": r["id"], "project": r["project"], "stage": stage, "state": r["state"], "where": where,
-                         "host": r["label"] if where == "runner" else None})
-        return {"version": VERSION, "runners": [{k: x[k] for k in ("runner", "label", "slots", "arch")} for x in live],
+            row = {"id": r["id"], "project": r["project"], "stage": stage, "state": r["state"], "where": where,
+                   "host": r["label"] if where == "runner" else None}
+            if r["rstate"] in ("returned", "failed") and where != "runner":
+                row["given_back"] = r["note"]   # why the runner gave this stage back to this box
+            jobs.append(row)
+        return {"version": VERSION, "runners": [{k: x[k] for k in ("runner", "label", "slots", "free", "arch")} for x in live],
                 "local_workers": 1, "jobs": jobs}
 
     def work(self):

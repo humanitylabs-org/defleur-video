@@ -3,7 +3,9 @@ motion-capture or final-render stage, run it with this same app version, and han
 
 Nothing here runs unless a runner asks for work (POST /v1/remote/claim). With no live runner the
 service behaves exactly as before: one local worker, two active jobs. A stage the runner does not take,
-gives back, or stops reporting on goes back to this box's own worker, so a Short always renders.
+gives back, or stops reporting on goes back to this box's own worker, so a Short always renders. Only a
+runner that reports a free slot holds a waiting stage, and only for HOLD_S: a runner that is up but has no
+room (low disk, memory, setup refusal, every slot busy) never stops this box from rendering it.
 
 The runner never writes into a project directly: DeFleur builds the input bundle itself, and checks
 the returned folder (flat files, allowed kinds, every SHA-256 and size against result.json, same
@@ -26,6 +28,7 @@ import time
 REMOTE_STAGES = frozenset({"motion-capture", "final-render"})
 LIVE_S = 20            # a runner that has not asked for work for this long is not available
 SILENT_S = 300         # a taken stage without a heartbeat for this long goes back to this box
+HOLD_S = 30            # a waiting stage waits this long for a runner with a free slot, then renders here
 MAX_SLOTS = 4
 MAX_RESULT = 8 * 1024 ** 3
 RUNNER = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
@@ -63,9 +66,15 @@ class Registry:
         self.lock = threading.Lock()
         self.runners: dict[str, dict] = {}
 
-    def seen(self, runner: str, label: str, slots: int, arch: str):
+    def seen(self, runner: str, label: str, slots: int, arch: str, free: int | None = None):
+        now = time.time()
+        free = slots if free is None else free
         with self.lock:
-            self.runners[runner] = {"runner": runner, "label": label, "slots": slots, "arch": arch, "seen": time.time()}
+            old = self.runners.get(runner)
+            # When this runner last went from no room to room: a waiting stage is held at most HOLD_S from then.
+            room_since = old["room_since"] if old and old["free"] and now - old["seen"] <= LIVE_S else now
+            self.runners[runner] = {"runner": runner, "label": label, "slots": slots, "free": free, "arch": arch,
+                                    "seen": now, "room_since": room_since}
 
     def gone(self, runner: str):
         with self.lock:
@@ -76,15 +85,27 @@ class Registry:
         with self.lock:
             return [dict(r) for r in self.runners.values() if now - r["seen"] <= LIVE_S]
 
-    def slots(self) -> int:
-        return sum(r["slots"] for r in self.live())
+    def ready(self) -> list[dict]:
+        """Live runners that said they can take work now (free_slots > 0)."""
+        return [r for r in self.live() if r["free"] > 0]
+
+    def holds(self, created: float, now: float | None = None) -> bool:
+        """Whether a waiting remote stage queued at `created` still waits for a runner instead of this box."""
+        now = time.time() if now is None else now
+        return any(now - max(created, r["room_since"]) < HOLD_S for r in self.ready())
+
+    def slots(self, busy: dict[str, int] | None = None) -> int:
+        """Render slots the live runners can use: free ones plus the ones already running a stage here."""
+        busy = busy or {}
+        return sum(min(r["slots"], r["free"] + busy.get(r["runner"], 0)) for r in self.live())
 
 
 def queue_full(c, registry: Registry, stage: str | None) -> bool:
     """The old rule (two active jobs) unless a runner is live; then remote stages and the local
     stages of parallel Shorts each get room for the runner's slots."""
     active = [stage_of(r[0]) for r in c.execute("SELECT plan FROM jobs WHERE state IN ('queued','running')").fetchall()]
-    slots = registry.slots()
+    busy = dict(c.execute("SELECT runner, count(*) FROM remote_jobs WHERE state='running' GROUP BY runner").fetchall())
+    slots = registry.slots(busy)
     if not slots:
         return len(active) >= 2
     remote = sum(1 for s in active if s in REMOTE_STAGES)
@@ -94,15 +115,16 @@ def queue_full(c, registry: Registry, stage: str | None) -> bool:
 
 
 def next_local(c, registry: Registry):
-    """The oldest queued job this box's worker may run: remote stages wait for a live runner unless given back."""
+    """The oldest queued job this box's worker may run. A remote stage waits only while a live runner has a
+    free slot, and at most HOLD_S; a runner with no room, or one that gave the stage back, never holds it."""
     rows = c.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY created").fetchall()
     if not rows:
         return None
-    if not registry.live():
+    if not registry.ready():
         return rows[0]
     returned = {r[0] for r in c.execute("SELECT job FROM remote_jobs WHERE state IN ('returned','failed')").fetchall()}
     for row in rows:
-        if stage_of(row["plan"]) not in REMOTE_STAGES or row["id"] in returned:
+        if stage_of(row["plan"]) not in REMOTE_STAGES or row["id"] in returned or not registry.holds(row["created"]):
             return row
     return None
 

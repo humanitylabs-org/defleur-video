@@ -1,3 +1,18 @@
+# Release: 0.8.1 (a render worker with no free slot never stalls a Short)
+
+For wizard-os#1025. In 0.8.0 a runner that kept asking for work with `free_slots: 0` (the Mac below its disk reserve,
+short on memory, or refusing setup) still counted as live, so this box's worker skipped every waiting motion-capture
+and final-render stage and a Short could wait forever.
+
+- **Only a runner with room holds a stage.** The registry keeps each runner's `free_slots`. A waiting render stage
+  waits for a runner only while a live runner reports a free slot, and at most 30 s (`HOLD_S`) from when that runner
+  had room; otherwise this box renders it, one at a time, as without a runner.
+- **Queue room** counts only the slots a runner can use (its free slots plus the stages it is running), so a full or
+  low-disk runner no longer lets more stages queue than this box can render.
+- **`GET /v1/remote/status`** lists each runner's `free` slots, says `waiting_here` / `here` for a stage that falls
+  back, and adds `given_back` (the runner's note) for a stage a runner gave back, so callers can say why.
+- Test: `test_runner_with_zero_free_slots_never_blocks_this_box` (fails on 0.8.0: the stage stays queued).
+
 # Release: 0.8.0 (arm64 image; capture and final render can run on a render worker)
 
 For wizard-os#997 (Company Clips Shorts render on the Mac render worker, several at once).
