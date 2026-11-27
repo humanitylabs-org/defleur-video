@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import hashlib
 import workflow
 import motion
+import remote_stages
 import errno
 import fcntl
 import hmac
@@ -31,7 +32,7 @@ import secrets
 from typing import cast
 from editing import DURATION_TOLERANCE_S, Rejected, validate_options, validate_transcript, visual_filters, review_artifacts
 
-VERSION = "0.7.2"
+VERSION = "0.8.0"
 UPSTREAM = "30768288eb1308b18216a5df5eb4648fbce3e55b"
 MAX_UPLOAD = 8 * 1024 * 1024 * 1024
 MAX_PROJECTS = 8
@@ -724,6 +725,7 @@ class Store:
             self.lock.close()
             raise RuntimeError("data directory already owned by another worker")
         self.stop = threading.Event()
+        self.next_reap = 0.0
         with self.connect() as c:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, metadata TEXT NOT NULL);
@@ -732,7 +734,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS decisions(id TEXT PRIMARY KEY, project TEXT NOT NULL, content TEXT NOT NULL, created REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS job_decisions(job TEXT PRIMARY KEY, decision TEXT NOT NULL);
             UPDATE jobs SET state='failed', error='worker interrupted; explicitly submit a new preview' WHERE state IN ('queued','running');
-            """)
+            """ + remote_stages.SCHEMA)
+        self.remote = remote_stages.Registry()
         # Files not referenced by a committed project are interrupted uploads.
         for path in self.root.glob("*.upload"):
             path.unlink()
@@ -883,7 +886,7 @@ class Store:
             c.execute("BEGIN IMMEDIATE")
             if c.execute("SELECT count(*) FROM jobs").fetchone()[0] >= MAX_JOBS:
                 raise Rejected("job quota reached; delete an unused project")
-            if c.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0] >= 2:
+            if remote_stages.queue_full(c, self.remote, None):
                 raise Rejected("queue full")
             jid = uuid.uuid4().hex
             c.execute("INSERT INTO jobs VALUES(?,?,'queued',?,NULL,NULL,?)", (jid, identifier, json_bytes(plan).decode(), time.time()))
@@ -912,7 +915,7 @@ class Store:
             c.execute("BEGIN IMMEDIATE")
             if c.execute("SELECT count(*) FROM jobs").fetchone()[0] >= MAX_JOBS:
                 raise Rejected("job quota reached")
-            if c.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0] >= 2:
+            if remote_stages.queue_full(c, self.remote, stage):
                 raise Rejected("queue full")
             jid = uuid.uuid4().hex
             plan = {"workflow_stage": stage, "input": value}
@@ -924,6 +927,7 @@ class Store:
         with self.connect() as c:
             row = c.execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
             decision = c.execute("SELECT decision FROM job_decisions WHERE job=?", (jid,)).fetchone()
+            remote = c.execute("SELECT * FROM remote_jobs WHERE job=?", (jid,)).fetchone()
         if row is None:
             raise FileNotFoundError("job not found")
         value = dict(row)
@@ -934,6 +938,8 @@ class Store:
         value["missing_delivery_gates"] = GATES
         if value["state"] == "running":
             value["progress"] = job_progress(self.path(value["project"]), jid)
+        if remote is not None:
+            value["remote"] = {"host": remote["label"], "state": remote["state"], "note": remote["note"]}
         return value
 
     def delete(self, identifier):
@@ -948,11 +954,152 @@ class Store:
             c.execute("DELETE FROM jobs WHERE project=?", (identifier,))
             c.execute("DELETE FROM projects WHERE id=?", (identifier,))
 
+    # ---- remote render stages (remote_stages.py): used only when a runner asks for work ----
+
+    def remote_claim(self, value):
+        info = remote_stages.runner_info(value)
+        if info["version"] != VERSION:
+            # Same app version or nothing: the house style must not depend on where a Short renders.
+            self.remote.gone(info["runner"])
+            raise Rejected(f"runner has DeFleur {info['version']}; this app is {VERSION}")
+        self.remote.seen(info["runner"], info["label"], info["slots"], info["arch"])
+        if not info["free"]:
+            return {"job": None}
+        now = time.time()
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            taken = {r[0] for r in c.execute("SELECT job FROM remote_jobs").fetchall()}
+            row = next((r for r in c.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY created").fetchall()
+                        if remote_stages.stage_of(r["plan"]) in remote_stages.REMOTE_STAGES and r["id"] not in taken), None)
+            if row is None:
+                return {"job": None}
+            c.execute("UPDATE jobs SET state='running' WHERE id=? AND state='queued'", (row["id"],))
+            c.execute("INSERT INTO remote_jobs VALUES(?,?,?,?,?,'running',NULL)", (row["id"], info["runner"], info["label"], now, now))
+        plan = parse_json(row["plan"])
+        return {"job": {"id": row["id"], "project": row["project"], "stage": plan["workflow_stage"],
+                        "bundle": f"/v1/remote/jobs/{row['id']}/bundle", "version": VERSION}}
+
+    def remote_bundle(self, jid, runner):
+        with self.connect() as c:
+            remote_stages.claim_row(c, jid, runner)
+        job = self.job(jid)
+        if job["state"] != "running":
+            raise Rejected("stage is not running")
+        project = self.path(job["project"])
+        metadata = self.project(job["project"])
+        stage, value = job["plan"]["workflow_stage"], job["plan"]["input"]
+        refs = []
+        jobs = {}
+        for ref in remote_stages.references(value, ID):
+            try:
+                other = self.job(ref)
+            except FileNotFoundError:
+                continue
+            if other["project"] == job["project"] and other["state"] == "needs_review":
+                refs.append(ref)
+                jobs[ref] = {k: other[k] for k in ("id", "project", "state", "plan", "result")}
+        header = {"format": remote_stages.FORMAT, "version": VERSION, "job": jid, "project": job["project"], "stage": stage,
+                  "input": value, "metadata": metadata, "plan_sha256": hashlib.sha256(json_bytes(job["plan"])).hexdigest(),
+                  "deadline_s": workflow.deadline_for(stage), "jobs": jobs}
+        if __import__("shutil").disk_usage(self.root).free < (project / "source.mp4").stat().st_size + 512 * 1024 * 1024:
+            raise Rejected("insufficient free disk to build the render bundle")
+        target = self.root / (jid + ".bundle.tar")
+        remote_stages.write_bundle(target, project, header, refs)
+        return target
+
+    def remote_heartbeat(self, jid, runner, progress):
+        now = time.time()
+        with self.connect() as c:
+            remote_stages.claim_row(c, jid, runner)
+            c.execute("UPDATE remote_jobs SET heartbeat=? WHERE job=?", (now, jid))
+            project = c.execute("SELECT project FROM jobs WHERE id=?", (jid,)).fetchone()[0]
+        if isinstance(progress, dict):
+            keep = {k: progress[k] for k in ("started", "phase", "phase_started", "phases_done", "frames_total", "estimate_s")
+                    if k in progress}
+            folder = self.path(project)
+            tmp = folder / (jid + ".progress.tmp")
+            try:
+                tmp.write_text(json.dumps(keep))
+                tmp.replace(folder / (jid + ".progress"))
+            except OSError:
+                pass
+        return {"ok": True}
+
+    def remote_result(self, jid, runner, stream, length):
+        with self.connect() as c:
+            row = remote_stages.claim_row(c, jid, runner)
+        job = self.job(jid)
+        folder = self.path(job["project"])
+        if __import__("shutil").disk_usage(self.root).free < length + 512 * 1024 * 1024:
+            raise Rejected("insufficient free disk for the render result")
+        inbox = folder / (jid + ".remote-in")
+        try:
+            result, stage_dir = remote_stages.read_result(stream, length, inbox)
+            metadata = self.project(job["project"])
+            remote_stages.check_result(result, stage_dir, job["plan"]["workflow_stage"], VERSION, metadata["source_sha256"],
+                                       hashlib.sha256(json_bytes(job["plan"])).hexdigest())
+            target = folder / (jid + ".stage")
+            if target.exists():
+                raise Rejected("stage folder already exists")
+            stage_dir.rename(target)
+            result.update({"render_host": row["label"], "remote_runner": row["runner"],
+                           "remote_seconds": round(time.time() - row["claimed"], 3)})
+            with self.connect() as c:
+                c.execute("BEGIN IMMEDIATE")
+                remote_stages.claim_row(c, jid, runner)
+                c.execute("UPDATE jobs SET state='needs_review',result=? WHERE id=? AND state='running'", (json_bytes(result).decode(), jid))
+                c.execute("UPDATE remote_jobs SET state='done', heartbeat=? WHERE job=?", (time.time(), jid))
+        finally:
+            __import__("shutil").rmtree(inbox, ignore_errors=True)
+            (folder / (jid + ".progress")).unlink(missing_ok=True)
+        return self.job(jid)
+
+    def remote_give_back(self, jid, runner, value):
+        if not isinstance(value, dict) or set(value) - {"error"} or not isinstance(value.get("error", ""), str):
+            raise Rejected('body is {"error": "what went wrong"}')
+        note = (value.get("error") or "given back by the render worker")[:300]
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            remote_stages.claim_row(c, jid, runner)
+            # Any failure on the runner falls back to this box's own worker, so the Short still renders.
+            c.execute("UPDATE remote_jobs SET state='returned', note=? WHERE job=?", (note, jid))
+            c.execute("UPDATE jobs SET state='queued' WHERE id=? AND state='running'", (jid,))
+            project = c.execute("SELECT project FROM jobs WHERE id=?", (jid,)).fetchone()[0]
+        (self.path(project) / (jid + ".progress")).unlink(missing_ok=True)
+        return self.job(jid)
+
+    def remote_status(self):
+        """Where each active capture/final-render stage is: taken by a runner, waiting for it, or on this box."""
+        live = self.remote.live()
+        with self.connect() as c:
+            rows = c.execute("SELECT j.id, j.project, j.state, j.plan, r.label, r.state AS rstate FROM jobs j "
+                             "LEFT JOIN remote_jobs r ON r.job = j.id WHERE j.state IN ('queued','running')").fetchall()
+        jobs = []
+        for r in rows:
+            stage = remote_stages.stage_of(r["plan"])
+            if stage not in remote_stages.REMOTE_STAGES:
+                continue
+            if r["rstate"] == "running":
+                where = "runner"
+            elif r["state"] == "queued" and live and r["rstate"] is None:
+                where = "waiting_for_runner"
+            elif r["state"] == "queued":
+                where = "waiting_here"
+            else:
+                where = "here"
+            jobs.append({"id": r["id"], "project": r["project"], "stage": stage, "state": r["state"], "where": where,
+                         "host": r["label"] if where == "runner" else None})
+        return {"version": VERSION, "runners": [{k: x[k] for k in ("runner", "label", "slots", "arch")} for x in live],
+                "local_workers": 1, "jobs": jobs}
+
     def work(self):
         while not self.stop.wait(0.1):
             with self.connect() as c:
                 c.execute("BEGIN IMMEDIATE")
-                row = c.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY created LIMIT 1").fetchone()
+                if time.monotonic() >= self.next_reap:
+                    remote_stages.reap(c)
+                    self.next_reap = time.monotonic() + 5
+                row = remote_stages.next_local(c, self.remote)
                 if row:
                     c.execute("UPDATE jobs SET state='running' WHERE id=?", (row["id"],))
             if not row:
@@ -1148,6 +1295,48 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             c.close()
 
+    def route_remote(self, method, parts, store):
+        """Remote render stages (remote_stages.py). Same bearer rule as every other /v1 route."""
+        if method == "POST" and parts[3:] == ["claim"]:
+            if self.headers.get("Content-Type") != "application/json":
+                raise Rejected("Content-Type must be application/json")
+            return self.send(200, store.remote_claim(parse_json(self.rfile.read(self.length(4096)))))
+        if method == "GET" and parts[3:] == ["status"]:
+            return self.send(200, store.remote_status())
+        if len(parts) == 6 and parts[3] == "jobs":
+            jid, action = parts[4], parts[5]
+            store.path(jid)
+            runner = self.headers.get("X-DeFleur-Runner", "")
+            if not remote_stages.RUNNER.fullmatch(runner):
+                raise Rejected("X-DeFleur-Runner header required")
+            if method == "GET" and action == "bundle":
+                path = store.remote_bundle(jid, runner)
+                try:
+                    self.send_response(200)
+                    for k, v in (("Content-Type", "application/x-tar"), ("Content-Length", str(path.stat().st_size)),
+                                 ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")):
+                        self.send_header(k, v)
+                    self.end_headers()
+                    with path.open("rb") as f:
+                        while chunk := f.read(1 << 20):
+                            self.wfile.write(chunk)
+                finally:
+                    path.unlink(missing_ok=True)
+                return None
+            if method == "POST" and action == "result":
+                if self.headers.get("Content-Type") != "application/x-tar":
+                    raise Rejected("Content-Type must be application/x-tar")
+                self.connection.settimeout(300)
+                return self.send(200, store.remote_result(jid, runner, self.rfile, self.length(remote_stages.MAX_RESULT)))
+            if method == "POST" and action in ("heartbeat", "give-back"):
+                if self.headers.get("Content-Type") != "application/json":
+                    raise Rejected("Content-Type must be application/json")
+                value = parse_json(self.rfile.read(self.length(65536)))
+                if action == "heartbeat":
+                    return self.send(200, store.remote_heartbeat(jid, runner, (value or {}).get("progress") if isinstance(value, dict) else None))
+                return self.send(200, store.remote_give_back(jid, runner, value))
+        return self.send(404, {"error": "route not found"})
+
     def route(self, method):
         if self.path == "/healthz" and method == "GET":
             return self.send(200, {"status": "ok", "version": VERSION})
@@ -1240,6 +1429,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(409, {"error": status["fix"] or "Files folder not writable", "media": status})
             return self.send(201, server.store.save_final(value["job"]))
         store = server.store
+        if parts[1:3] == ["v1", "remote"]:
+            return self.route_remote(method, parts, store)
         if method == "GET" and self.path == "/v1/capabilities":
             return self.send(200, {"version": VERSION, "upstream_commit": UPSTREAM,
                 "operations": ["upload_mp4", "workflow_stages", "read_workflow_docs", "submit_edit_plan_preview", "persist_transcript_decisions", "burn_timed_captions", "fixed_protected_crop", "cut_edge_review_artifacts", "poll_job", "download_preview", "delete_project"],

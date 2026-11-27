@@ -1,6 +1,8 @@
 *
 !Dockerfile
 !service.py
+!remote_stages.py
+!stage_runner.py
 !editing.py
 !client.py
 !workflow.py

@@ -1,3 +1,29 @@
+# Release: 0.8.0 (arm64 image; capture and final render can run on a render worker)
+
+For wizard-os#997 (Company Clips Shorts render on the Mac render worker, several at once).
+
+- **arm64 image.** The image is now published for amd64 and arm64 under the same tag. Each architecture is built and
+  tested natively on its own GitHub runner (`ubuntu-24.04` and `ubuntu-24.04-arm`), never under emulation; the
+  hash-locked `requirements.lock` already pins aarch64 wheels for every package (checked with
+  `uv pip install --python-platform aarch64-unknown-linux-gnu --require-hashes`). Runtipi lists `amd64, arm64`.
+- **Remote render stages (`remote_stages.py`, `stage_runner.py`).** An outside runner may take a waiting
+  `motion-capture` or `final-render` stage: `POST /v1/remote/claim` (same app version only), `GET
+  /v1/remote/jobs/<id>/bundle` (source, motion composition and the referenced stage folders as one tar), run
+  `python3 /app/stage_runner.py /work` in this same image, then `POST .../result` (a tar of `result.json` + the flat
+  stage folder). DeFleur checks every file's SHA-256 and size against `result.json`, the stage, the app version and
+  the source and plan hashes before the job becomes `needs_review`; the result sits in the same project and job as a
+  local render (plus `render_host`). `POST .../heartbeat` carries progress; `POST .../give-back`, a runner that stops
+  reporting for 5 minutes, or a runner that stops asking for work (20 s) puts the stage back on this box's own
+  worker. `GET /v1/remote/status` says where each active render stage is.
+- **Nothing changes without a runner.** With no runner asking for work, the worker, the two-job queue and every
+  result are exactly as in 0.7.2. While a runner is live, the queue gets room for its slots (parallel Shorts), and
+  `get_status` / `render_final` / `capture_motion` name the `render_host`.
+- **House-look check per architecture.** CI renders the same motion Short (`scripts/test-render-smoke.py`: proof capture
+  through the Browser app's pinned headless Chromium, then final render) on amd64 and on arm64 and fails unless the
+  two finals have the same size and length and decode to the same picture (average PSNR >= 40 dB).
+- Tests: `test_remote_stage_round_trip_matches_a_local_render` (same artifact hashes as a local render),
+  `test_remote_stage_given_back_tampered_or_silent_renders_here`, `test_remote_queue_room_only_while_a_runner_is_live`.
+
 # Release: 0.7.1 (name and version without the Testing label; no code change)
 
 The whole of Wizard OS is pre-release, so the store name drops "(Testing)" and the version drops `-testing`. Same code as 0.7.0-testing.
