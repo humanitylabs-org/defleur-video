@@ -1,3 +1,25 @@
+# Release: 0.10.1 (a render worker with no free slot never stalls a Short)
+
+For wizard-os#1025. In 0.8.0 to 0.10.0 a runner that kept asking for work with `free_slots: 0` (the Mac below its disk reserve,
+short on memory, or refusing setup) still counted as live, so this box's worker skipped every waiting motion-capture
+and final-render stage and a Short could wait forever.
+
+- **Only a runner with room holds a stage.** The registry keeps each runner's `free_slots`. A waiting render stage
+  waits for a runner only while a live runner reports a free slot, and at most 30 s (`HOLD_S`) from when that runner
+  had room; otherwise this box renders it, one at a time, as without a runner.
+- **Queue room** counts only the slots a runner can use (its free slots plus the stages it is running), so a full or
+  low-disk runner no longer lets more stages queue than this box can render.
+- A runner whose every slot is busy with this box's stages still holds the next one (a slot frees up when one
+  finishes), also at most 30 s; a finished result frees its slot at once, so a Short's next stage is not lost to a
+  stale `free_slots: 0` between claims.
+- **Each stage says why it fell back.** The claim takes an optional `note` (one short line, why the runner has no
+  room, e.g. "The Mac is low on disk"). While a runner is involved, the job JSON carries `render_place` (`where`,
+  `why`, and a plain `status` such as "The Mac is low on disk: rendering on this box, one at a time"), the same
+  `status`/`why` appear per stage in `GET /v1/remote/status` (which also lists each runner's `free` slots and `note`,
+  and `given_back` for a stage a runner handed back), and `get_status` / `render_final` show it as `render_status`.
+  Without a runner nothing is added.
+- Tests: `test_runner_with_zero_free_slots_never_blocks_this_box` (fails on 0.10.0: the stage stays queued) and
+  `test_a_stage_that_falls_back_says_why`.
 # Release: 0.10.0 (editing styles: style packs, the window layout, a style per project)
 
 For humanitylabs-org/wizard-os#1012 (Clips Pipeline: choose a Shorts style, make both, split-test them).

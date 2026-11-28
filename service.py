@@ -32,7 +32,7 @@ import secrets
 from typing import cast
 from editing import DURATION_TOLERANCE_S, Rejected, validate_options, validate_transcript, visual_filters, review_artifacts
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 UPSTREAM = "30768288eb1308b18216a5df5eb4648fbce3e55b"
 MAX_UPLOAD = 8 * 1024 * 1024 * 1024
 MAX_PROJECTS = 8
@@ -932,6 +932,7 @@ class Store:
             row = c.execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
             decision = c.execute("SELECT decision FROM job_decisions WHERE job=?", (jid,)).fetchone()
             remote = c.execute("SELECT * FROM remote_jobs WHERE job=?", (jid,)).fetchone()
+            busy = remote_stages.busy_counts(c)
         if row is None:
             raise FileNotFoundError("job not found")
         value = dict(row)
@@ -944,6 +945,11 @@ class Store:
             value["progress"] = job_progress(self.path(value["project"]), jid)
         if remote is not None:
             value["remote"] = {"host": remote["label"], "state": remote["state"], "note": remote["note"]}
+        if value["state"] in ("queued", "running") and remote_stages.stage_of(value["plan"]) in remote_stages.REMOTE_STAGES:
+            where = remote_stages.place(self.remote, value["state"], value["created"], remote["state"] if remote else None,
+                                        remote["label"] if remote else None, remote["note"] if remote else None, busy)
+            if where:   # only while a runner is involved (wizard-os#1025): where it renders, and why it fell back
+                value["render_place"] = where
         return value
 
     def delete(self, identifier):
@@ -966,7 +972,7 @@ class Store:
             # Same app version or nothing: the house style must not depend on where a Short renders.
             self.remote.gone(info["runner"])
             raise Rejected(f"runner has DeFleur {info['version']}; this app is {VERSION}")
-        self.remote.seen(info["runner"], info["label"], info["slots"], info["arch"])
+        self.remote.seen(info["runner"], info["label"], info["slots"], info["arch"], info["free"], info["note"])
         if not info["free"]:
             return {"job": None}
         now = time.time()
@@ -1053,6 +1059,7 @@ class Store:
                 remote_stages.claim_row(c, jid, runner)
                 c.execute("UPDATE jobs SET state='needs_review',result=? WHERE id=? AND state='running'", (json_bytes(result).decode(), jid))
                 c.execute("UPDATE remote_jobs SET state='done', heartbeat=? WHERE job=?", (time.time(), jid))
+            self.remote.finished(runner)
         finally:
             __import__("shutil").rmtree(inbox, ignore_errors=True)
             (folder / (jid + ".progress")).unlink(missing_ok=True)
@@ -1076,24 +1083,26 @@ class Store:
         """Where each active capture/final-render stage is: taken by a runner, waiting for it, or on this box."""
         live = self.remote.live()
         with self.connect() as c:
-            rows = c.execute("SELECT j.id, j.project, j.state, j.plan, r.label, r.state AS rstate FROM jobs j "
+            rows = c.execute("SELECT j.id, j.project, j.state, j.plan, j.created, r.label, r.state AS rstate, r.note FROM jobs j "
                              "LEFT JOIN remote_jobs r ON r.job = j.id WHERE j.state IN ('queued','running')").fetchall()
+            busy = remote_stages.busy_counts(c)
         jobs = []
         for r in rows:
             stage = remote_stages.stage_of(r["plan"])
             if stage not in remote_stages.REMOTE_STAGES:
                 continue
-            if r["rstate"] == "running":
-                where = "runner"
-            elif r["state"] == "queued" and live and r["rstate"] is None:
-                where = "waiting_for_runner"
-            elif r["state"] == "queued":
-                where = "waiting_here"
-            else:
-                where = "here"
-            jobs.append({"id": r["id"], "project": r["project"], "stage": stage, "state": r["state"], "where": where,
-                         "host": r["label"] if where == "runner" else None})
-        return {"version": VERSION, "runners": [{k: x[k] for k in ("runner", "label", "slots", "arch")} for x in live],
+            at = remote_stages.place(self.remote, r["state"], r["created"], r["rstate"], r["label"], r["note"], busy)
+            where = at["where"] if at else ("waiting_here" if r["state"] == "queued" else "here")
+            row = {"id": r["id"], "project": r["project"], "stage": stage, "state": r["state"], "where": where,
+                   "host": r["label"] if where == "runner" else None}
+            if at:
+                row["status"] = at["status"]   # one plain line: where it renders and, after a fallback, why
+                if at.get("why"):
+                    row["why"] = at["why"]
+            if r["rstate"] in ("returned", "failed") and where != "runner":
+                row["given_back"] = r["note"]   # the runner's own note when it gave this stage back
+            jobs.append(row)
+        return {"version": VERSION, "runners": [{k: x[k] for k in ("runner", "label", "slots", "free", "arch", "note")} for x in live],
                 "local_workers": 1, "jobs": jobs}
 
     def work(self):

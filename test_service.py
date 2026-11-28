@@ -246,7 +246,7 @@ class MediaTests(unittest.TestCase):
         self.assertNotIn("remote", local)
         self.assertNotIn("render_host", local["result"])
         with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"pcm-assemble"})):
-            status, idle = self.claim(free=0)                    # runner checks in (live), takes nothing yet
+            status, idle = self.claim()                          # runner checks in with room, nothing to take yet
             self.assertEqual((status, idle), (200, {"job": None}))
             status, job = self.request("POST", f"/v1/projects/{pid}/stages/pcm-assemble", json.dumps(value))
             self.assertEqual(status, 202, job)
@@ -282,7 +282,7 @@ class MediaTests(unittest.TestCase):
         client = Client(f"http://127.0.0.1:{self.server.server_port}", self.token)
         pid = client.upload(self.source)["id"]
         with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"resolve-preset"})):
-            self.claim(free=0)
+            self.claim()
             first = self.request("POST", f"/v1/projects/{pid}/stages/resolve-preset", "{}")[1]
             taken = self.claim()[1]["job"]
             self.assertEqual(taken["id"], first["id"])
@@ -301,7 +301,7 @@ class MediaTests(unittest.TestCase):
             self.assertEqual(back["remote"], {"host": "the Mac", "state": "returned", "note": "Mac unreachable"})
             self.assertNotIn("render_host", back["result"])
             # A runner that stops reporting: its stage goes back to this box.
-            self.claim(free=0)
+            self.claim()
             second = self.request("POST", f"/v1/projects/{pid}/stages/resolve-preset", "{}")[1]
             self.assertEqual(self.claim()[1]["job"]["id"], second["id"])
             with patch.object(remote_stages, "SILENT_S", 0), patch.object(remote_stages, "LIVE_S", 0):
@@ -323,11 +323,105 @@ class MediaTests(unittest.TestCase):
             with self.assertRaisesRegex(service.Rejected, "queue full"):   # no runner: the old two-job rule
                 store.submit_stage(project["id"], "resolve-preset", {})
             store.remote_claim({"runner": "mac", "label": "the Mac", "arch": "arm64", "version": service.VERSION, "slots": 3, "free_slots": 0})
-            for _ in range(3):                                            # runner live: room for its 3 slots
+            with self.assertRaisesRegex(service.Rejected, "queue full"):   # up but no room: still the old rule
+                store.submit_stage(project["id"], "resolve-preset", {})
+            store.remote_claim({"runner": "mac", "label": "the Mac", "arch": "arm64", "version": service.VERSION, "slots": 3, "free_slots": 3})
+            for _ in range(3):                                            # runner with room: room for its 3 slots
                 store.submit_stage(project["id"], "resolve-preset", {})
             with self.assertRaisesRegex(service.Rejected, "queue full"):
                 store.submit_stage(project["id"], "resolve-preset", {})
         store.close()
+
+    def test_runner_with_zero_free_slots_never_blocks_this_box(self):
+        """wizard-os#1025: a runner that is up but has no room (low disk) keeps asking for work with free_slots 0.
+        A waiting render stage still renders on this box; only a runner with a free slot holds it, for HOLD_S."""
+        import remote_stages
+        self.addCleanup(self.server.store.remote.gone, "mac")   # the class shares one server
+        from client import Client
+        client = Client(f"http://127.0.0.1:{self.server.server_port}", self.token)
+        pid = client.upload(self.source)["id"]
+        stop = threading.Event()
+
+        def heartbeat(free):                                     # what the Mac's runner does every 3 s
+            while not stop.wait(0.2):
+                self.claim(free=free)
+        with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"resolve-preset"})):
+            self.claim(free=0)
+            beat = threading.Thread(target=heartbeat, args=(0,), daemon=True)
+            beat.start()
+            try:
+                job = self.request("POST", f"/v1/projects/{pid}/stages/resolve-preset", "{}")[1]
+                done = client.wait(job["id"], True)
+                status = self.remote("GET", "/v1/remote/status")[1]
+            finally:
+                stop.set()
+                beat.join()
+            self.assertEqual(done["state"], "needs_review", done.get("error"))   # rendered here, not stalled
+            self.assertNotIn("remote", done)
+            self.assertNotIn("render_host", done["result"])
+            self.assertEqual([(r["runner"], r["free"]) for r in status["runners"]], [("mac", 0)])
+            # A runner that said it has a free slot but does not take the stage (it went quiet, still within
+            # LIVE_S) holds it at most HOLD_S, then this box renders it.
+            self.claim(free=1)
+            with patch.object(remote_stages, "HOLD_S", 1.5):
+                started = time.monotonic()
+                job = self.request("POST", f"/v1/projects/{pid}/stages/resolve-preset", "{}")[1]
+                time.sleep(0.5)
+                self.assertEqual(client.wait(job["id"], False)["state"], "queued")
+                self.assertEqual(self.remote("GET", "/v1/remote/status")[1]["jobs"][0]["where"], "waiting_for_runner")
+                done = client.wait(job["id"], True)
+            self.assertEqual(done["state"], "needs_review", done.get("error"))
+            self.assertNotIn("remote", done)
+            self.assertLess(time.monotonic() - started, 10)
+
+    def test_a_stage_that_falls_back_says_why(self):
+        """wizard-os#1025: while a runner is up, a stage on this box says why in one plain line (job, status, MCP)."""
+        import remote_stages
+        store = service.Store(self.root / "remote-why")
+        store.stop.set()
+        store.worker.join(timeout=2)
+        project = store.create(io.BytesIO(self.source.read_bytes()), self.source.stat().st_size)
+        claim = {"runner": "mac", "label": "the Mac", "arch": "arm64", "version": service.VERSION, "slots": 3}
+        with patch.object(remote_stages, "REMOTE_STAGES", frozenset({"resolve-preset"})):
+            job = store.submit_stage(project["id"], "resolve-preset", {})
+            self.assertNotIn("render_place", store.job(job["id"]))              # no runner: nothing changes
+            with self.assertRaisesRegex(service.Rejected, "note"):
+                store.remote_claim({**claim, "free_slots": 0, "note": "line\nbreak"})
+            store.remote_claim({**claim, "free_slots": 0, "note": "The Mac is low on disk"})
+            self.assertEqual(store.job(job["id"])["render_place"],
+                             {"where": "waiting_here", "host": None, "why": "The Mac is low on disk",
+                              "status": "The Mac is low on disk: waiting for this box's render slot (one at a time)"})
+            row = store.remote_status()["jobs"][0]
+            self.assertEqual((row["where"], row["why"]), ("waiting_here", "The Mac is low on disk"))
+            self.assertEqual(store.remote_status()["runners"][0]["note"], "The Mac is low on disk")
+            with store.connect() as c:
+                c.execute("UPDATE jobs SET state='running' WHERE id=?", (job["id"],))
+            self.assertEqual(store.job(job["id"])["render_place"]["status"], "The Mac is low on disk: rendering on this box, one at a time")
+            with store.connect() as c:
+                c.execute("UPDATE jobs SET state='queued' WHERE id=?", (job["id"],))
+            store.remote_claim({**claim, "free_slots": 0})                       # no note: still says why
+            self.assertEqual(store.job(job["id"])["render_place"]["why"], "The Mac has no free render slot")
+            with patch.object(remote_stages, "HOLD_S", 0):                     # room, but it did not take it in time
+                with patch.object(store.remote, "ready", return_value=[{**store.remote.live()[0], "free": 1}]):
+                    self.assertEqual(store.job(job["id"])["render_place"]["why"], "The Mac did not take it within 0 s")
+            taken = store.remote_claim({**claim, "free_slots": 1})["job"]       # room: the Mac takes it
+            other = store.submit_stage(project["id"], "resolve-preset", {})
+            store.remote_claim({**claim, "free_slots": 0})                       # full with our stage: holds the next one
+            self.assertEqual(store.job(other["id"])["render_place"]["where"], "waiting_for_runner")
+            with patch.object(remote_stages, "HOLD_S", 0):
+                self.assertEqual(store.job(other["id"])["render_place"]["why"], "The Mac's render slots are all busy")
+            self.assertEqual(store.job(taken["id"])["render_place"], {"where": "runner", "host": "the Mac", "status": "Rendering on the Mac"})
+            store.remote_give_back(taken["id"], "mac", {"error": "colima did not start"})
+            self.assertEqual(store.job(taken["id"])["render_place"]["status"],
+                             "The Mac gave this render back (colima did not start): waiting for this box's render slot (one at a time)")
+        store.close()
+        running, done = self._mcp_py("""
+run = {"id": "r", "kind": "render_final", "project": "p", "state": "running", "step": "final-render", "created": 1000.0,
+       "render_status": "The Mac is low on disk: rendering on this box, one at a time"}
+print(json.dumps([mcp_server.public_run(run, now=1100.0), mcp_server.public_run({**run, "state": "done", "result": {}}, now=1100.0)]))
+""")
+        self.assertEqual(running["render_status"], "The Mac is low on disk: rendering on this box, one at a time")
+        self.assertNotIn("render_status", done)
 
     def test_piece1_stages_over_http(self):
         import workflow
@@ -1781,7 +1875,7 @@ print(json.dumps([cuts, mcp_server.keeps_from(cuts, 121.728), mcp_server.preview
         finally:
             del os.environ["BROWSER_URL"]
         self.assertEqual(status, 200)
-        self.assertEqual(caps["version"], "0.10.0")
+        self.assertEqual(caps["version"], "0.10.1")
         b = caps["workflow"]["motion"]["browser"]
         self.assertFalse(b["reachable"])
         self.assertIn("Browser app", b["fix"])
