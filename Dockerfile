@@ -31,6 +31,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 ffmpeg 
     && mkdir /app /data && chown 1000:1000 /data
 RUN test -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf && fc-match -f '%{file}' 'sans-serif:style=Bold' | grep -q '^/usr/share/fonts/truetype/dejavu/' \
     && fc-match -f '%{file}' 'Montserrat:style=Black' | grep -q 'Montserrat-Black'
+# Fonts for installed style packs (wizard-os#1012): Playfair Display Italic and Cormorant Garamond (+ Italic), SIL OFL 1.1,
+# from google/fonts at a pinned commit (Ubuntu does not package them). Hashes pinned; licences copied beside them.
+ADD --checksum=sha256:a5e26dc5e2e77fb2803a0bf02fd4f81ee136ec8dea863ccdb0c59a263b21378b \
+    https://raw.githubusercontent.com/google/fonts/5026800714d07231937d92eb4cceabf06e05d74e/ofl/playfairdisplay/PlayfairDisplay-Italic%5Bwght%5D.ttf \
+    /usr/share/fonts/truetype/wizard-styles/PlayfairDisplay-Italic.ttf
+ADD --checksum=sha256:b20b7d9626dd956b2c5e558692ad328b1f19e3275e2782db4fa07670d83f35e0 \
+    https://raw.githubusercontent.com/google/fonts/5026800714d07231937d92eb4cceabf06e05d74e/ofl/cormorantgaramond/CormorantGaramond%5Bwght%5D.ttf \
+    /usr/share/fonts/truetype/wizard-styles/CormorantGaramond.ttf
+ADD --checksum=sha256:0f48ea6abb2084537854f7174c470991a463b13036309e3b50a81511611c530d \
+    https://raw.githubusercontent.com/google/fonts/5026800714d07231937d92eb4cceabf06e05d74e/ofl/cormorantgaramond/CormorantGaramond-Italic%5Bwght%5D.ttf \
+    /usr/share/fonts/truetype/wizard-styles/CormorantGaramond-Italic.ttf
+ADD --checksum=sha256:566be814f8e96e93dfa16101331557eb6b5467e9e03f627c0910fe93ca12300e \
+    https://raw.githubusercontent.com/google/fonts/5026800714d07231937d92eb4cceabf06e05d74e/ofl/playfairdisplay/OFL.txt \
+    /usr/share/fonts/truetype/wizard-styles/OFL-PlayfairDisplay.txt
+ADD --checksum=sha256:60700d351cac4650c51f3f9db318d2a420f8b45052dba2715eb5fec41f0f6956 \
+    https://raw.githubusercontent.com/google/fonts/5026800714d07231937d92eb4cceabf06e05d74e/ofl/cormorantgaramond/OFL.txt \
+    /usr/share/fonts/truetype/wizard-styles/OFL-CormorantGaramond.txt
+RUN chmod 0644 /usr/share/fonts/truetype/wizard-styles/* && fc-cache -f \
+    && fc-match -f '%{file}' 'Playfair Display:style=Italic' | grep -q 'wizard-styles/PlayfairDisplay-Italic' \
+    && fc-match -f '%{file}' 'Cormorant Garamond:style=Italic' | grep -q 'wizard-styles/CormorantGaramond-Italic' \
+    && fc-match -f '%{file}' 'Montserrat:style=Bold' | grep -q 'Montserrat-Bold'
 COPY --from=venv /opt/venv /opt/venv
 COPY --from=capture /usr/local/bin/node /usr/bin/node
 COPY --from=capture /opt/capture /opt/capture
@@ -46,7 +67,7 @@ LABEL org.opencontainers.image.source="https://github.com/humanitylabs-org/defle
 COPY defleur/ /opt/defleur/
 COPY NOTICE /opt/defleur/NOTICE
 WORKDIR /app
-COPY service.py remote_stages.py stage_runner.py editing.py client.py workflow.py transcriber.py scan_windows.py energy.py face_audit.py final_render.py motion.py motion_frames.py mcp_server.py /app/
+COPY service.py remote_stages.py stage_runner.py editing.py client.py workflow.py transcriber.py scan_windows.py energy.py face_audit.py final_render.py motion.py motion_frames.py mcp_server.py styles.py style_render.py /app/
 # Agent-facing editing judgment (Agent Skills format), served at GET /SKILL.md and as an MCP resource.
 COPY SKILL.md /app/
 RUN /opt/venv/bin/python -I /opt/defleur/skills/defleur-audio/scripts/test_audio_gate.py

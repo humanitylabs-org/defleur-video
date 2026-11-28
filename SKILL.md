@@ -43,6 +43,16 @@ this full edit, in James' house style, with no style questions.
   stays empty; the app refuses plans that switch captions off. Graphics carry labels, numbers and diagrams in big type
   (labels >= 44 px, headline >= 72 px at 1080 wide), not a second copy of the spoken sentence.
 
+## Editing styles (style packs)
+
+James' house style is the default and needs nothing. A Short can also be made in another editing style (`capabilities.styles`,
+`workflow_guide(style=<id>)`): Clips picks it when it starts the edit (`start_edit(..., style=<id>)`), and the project keeps it.
+When `start_edit`'s result has `style_guide`, that style's `STYLE.md` and the rules it replaces (`style_rules`) win over the house
+text wherever they differ: follow its approval line (for example title and tagline with alternates, and the image plan, shown with
+the cuts in the ONE approval question), its insert pacing (checked by `submit_motion`), and pass the approved slot text in
+`render_final(project_id, {'motion': true, 'slots': {...}})`. A window-layout style needs no `capture_motion`: the app draws its
+window, image box, text layers and captions itself.
+
 ## 0. Agent check (before anything else)
 
 Call `workflow_guide(agent_harness=<your harness>, agent_model=<your exact model id>)` and report honestly.
